@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mobius-user"
+version = "0.1.0"
+description = "Shared user/auth module for Mobius applications"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.0",
+    "bcrypt>=4.0",
+    "PyJWT>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+flask = ["flask>=2.0"]
+fastapi = ["fastapi>=0.100", "python-multipart>=0.0.6"]
+migrations = ["alembic>=1.10"]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+all = [
+    "mobius-user[flask,fastapi,migrations,dev]",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mobius_user*"]
