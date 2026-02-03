@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build output (optional: remove if you want to commit dist for consumers)
+dist/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Env (if any)
+.env
+.env.local
