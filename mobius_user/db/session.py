@@ -50,6 +50,8 @@ def init_db(database_url: str | None = None) -> None:
         pool_pre_ping=True,
         pool_recycle=300,
         pool_reset_on_return="rollback",
+        pool_size=2,  # Cap connections per instance when sharing a small DB
+        max_overflow=3,
     )
     
     @event.listens_for(_engine, "checkout")
