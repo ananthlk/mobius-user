@@ -454,9 +454,10 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
                     )
 
         # If user hasn't completed onboarding yet, saving preferences counts —
-        # flip the flag so /me returns a non-null profile and personalization applies.
-        if not db_user.is_onboarded:
-            db_user.is_onboarded = True
+        # set the timestamp so the is_onboarded property flips, /me returns
+        # a non-null profile, and personalization applies.
+        # (is_onboarded is a read-only @property derived from this timestamp.)
+        if db_user.onboarding_completed_at is None:
             db_user.onboarding_completed_at = datetime.utcnow()
 
         session.commit()
