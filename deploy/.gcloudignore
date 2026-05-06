@@ -1,0 +1,35 @@
+# .gcloudignore for mobius-user.
+#
+# gcloud tars the build context (the repo root) and uploads it to Cloud
+# Build. We allow only what the Dockerfile actually COPYs.
+
+*
+
+# Un-exclude the bits the Dockerfile needs.
+!mobius_user/
+!app/
+!migrations/
+!alembic.ini
+!Dockerfile
+!requirements.txt
+
+# Prune noise.
+**/.git/
+**/.github/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/node_modules/
+**/.DS_Store
+**/.claude/
+**/*.egg-info/
+
+# Skip the embedded JS package — not part of the Python service image.
+mobius-auth/
+
+# Skip alembic migrations versions/__pycache__ (already covered above but explicit).
+migrations/versions/__pycache__/

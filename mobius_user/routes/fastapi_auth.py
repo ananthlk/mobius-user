@@ -10,11 +10,16 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
+import logging
+
 from mobius_user.services.auth_service import get_auth_service, get_user_from_token
+from mobius_user.services.welcome_email import send_welcome_email
 from mobius_user.db.session import get_db_session
 from mobius_user.models.tenant import AppUser
 from mobius_user.models.activity import Activity, UserActivity
 from mobius_user.models.preference import UserPreference
+
+logger = logging.getLogger(__name__)
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request
@@ -133,7 +138,60 @@ def register(body: RegisterBody):
         email=email, password=password, tenant_id=tenant_id
     )
 
-    return {"ok": True, "message": "Registration successful", **auth_response}
+    # Best-effort welcome email — never blocks signup on failure.
+    try:
+        send_welcome_email(
+            user_id=str(user.user_id),
+            email=user.email or email,
+            first_name=user.first_name or (body.first_name or "").strip() or None,
+        )
+    except Exception:
+        logger.warning("register: welcome email send raised", exc_info=True)
+
+    return {
+        "ok": True,
+        "message": "Registration successful",
+        "is_new_user": True,
+        **auth_response,
+    }
+
+
+@router.post("/google")
+def google_sign_in(body: dict):
+    """Sign in (or auto-create on first time) with a Google ID token.
+
+    Body: {"id_token": "<google id token>", "tenant_id": "<optional>", "device_info": {...}}
+    """
+    id_token_str = (body.get("id_token") or "").strip()
+    if not id_token_str:
+        raise HTTPException(status_code=400, detail="id_token is required")
+
+    tenant_id = _get_tenant_id(body.get("tenant_id"))
+    device_info = body.get("device_info")
+
+    auth_service = get_auth_service()
+    auth_service.get_or_create_default_tenant()
+
+    auth_response, is_new_user, error = auth_service.authenticate_google(
+        id_token_str=id_token_str,
+        tenant_id=tenant_id,
+        device_info=device_info,
+    )
+    if error:
+        raise HTTPException(status_code=401, detail=error)
+
+    if is_new_user:
+        user_obj = (auth_response or {}).get("user") or {}
+        try:
+            send_welcome_email(
+                user_id=str(user_obj.get("user_id") or ""),
+                email=str(user_obj.get("email") or ""),
+                first_name=user_obj.get("first_name"),
+            )
+        except Exception:
+            logger.warning("google: welcome email send raised", exc_info=True)
+
+    return {"ok": True, "is_new_user": is_new_user, **auth_response}
 
 
 @router.post("/login")
