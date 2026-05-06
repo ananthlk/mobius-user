@@ -453,6 +453,12 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
                         )
                     )
 
+        # If user hasn't completed onboarding yet, saving preferences counts —
+        # flip the flag so /me returns a non-null profile and personalization applies.
+        if not db_user.is_onboarded:
+            db_user.is_onboarded = True
+            db_user.onboarding_completed_at = datetime.utcnow()
+
         session.commit()
 
     profile = get_auth_service().regenerate_user_profile(user.user_id)
