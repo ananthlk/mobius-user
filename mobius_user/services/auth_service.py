@@ -21,6 +21,10 @@ from mobius_user.db.session import get_db_session
 from mobius_user.models.tenant import AppUser, AuthProviderLink, UserSession, Tenant
 from mobius_user.models.activity import Activity, UserActivity
 from mobius_user.models.preference import UserPreference
+from mobius_user.services.prompt_builder import (
+    CURRENT_TEMPLATE_VERSION,
+    build_user_profile,
+)
 
 
 def _get_jwt_secret() -> str:
@@ -302,6 +306,24 @@ class AuthService:
                 .first()
             )
 
+            # Surface the user profile envelope. Lazy-regenerate if the
+            # stored version is older than the current template — pure
+            # in-process work, no LLM, so we do it inline.
+            profile_envelope: Optional[dict] = None
+            if preference is not None:
+                stored = preference.profile_json
+                stored_version = preference.profile_version
+                if stored and stored_version == CURRENT_TEMPLATE_VERSION:
+                    profile_envelope = stored
+                else:
+                    profile_envelope = self._build_profile_envelope(
+                        user, preference, activities
+                    )
+                    preference.profile_json = profile_envelope
+                    preference.profile_version = CURRENT_TEMPLATE_VERSION
+                    preference.profile_generated_at = datetime.utcnow()
+                    session.commit()
+
             return {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
@@ -334,6 +356,7 @@ class AuthService:
                     }
                     if preference
                     else None,
+                    "profile": profile_envelope,
                 },
             }
 
@@ -548,6 +571,90 @@ class AuthService:
             return None
 
         return self.get_user_by_id(uuid.UUID(user_id))
+
+    # =========================================================================
+    # User profile (preferences → structured envelope for consumer modules)
+    # =========================================================================
+
+    def _build_profile_envelope(
+        self,
+        user: AppUser,
+        preference: Optional[UserPreference],
+        activities_resolved: list[dict],
+    ) -> dict:
+        """Build the profile envelope from already-loaded model instances."""
+        return build_user_profile(
+            preferred_name=user.preferred_name,
+            first_name=user.first_name,
+            display_name=user.display_name,
+            timezone_str=user.timezone,
+            activities=[
+                {"code": a["activity_code"], "label": a["label"]}
+                for a in activities_resolved
+            ],
+            tone=preference.tone if preference else None,
+            ai_experience_level=preference.ai_experience_level if preference else None,
+            greeting_enabled=preference.greeting_enabled if preference else True,
+            autonomy_routine_tasks=preference.autonomy_routine_tasks if preference else None,
+            autonomy_sensitive_tasks=preference.autonomy_sensitive_tasks if preference else None,
+        )
+
+    def regenerate_user_profile(self, user_id: uuid.UUID) -> Optional[dict]:
+        """Build and persist the user profile envelope.
+
+        Called from write paths (PUT /onboarding, PUT /preferences) and from
+        read paths when profile_version is stale or null. Idempotent.
+        Returns the freshly-built envelope, or None if the user has no
+        preference row (brand-new account, no onboarding yet).
+        """
+        with get_db_session() as session:
+            user = (
+                session.query(AppUser)
+                .filter(AppUser.user_id == user_id)
+                .first()
+            )
+            if not user:
+                return None
+
+            preference = (
+                session.query(UserPreference)
+                .filter(UserPreference.user_id == user_id)
+                .first()
+            )
+
+            user_activities = (
+                session.query(UserActivity)
+                .filter(UserActivity.user_id == user_id)
+                .all()
+            )
+            activities_resolved: list[dict] = []
+            for ua in user_activities:
+                activity = (
+                    session.query(Activity)
+                    .filter(Activity.activity_id == ua.activity_id)
+                    .first()
+                )
+                if activity:
+                    activities_resolved.append({
+                        "activity_code": activity.activity_code,
+                        "label": activity.label,
+                        "is_primary": ua.is_primary,
+                    })
+
+            envelope = self._build_profile_envelope(
+                user, preference, activities_resolved
+            )
+
+            if preference is None:
+                # No preference row yet — return the envelope but don't persist.
+                # Onboarding will create the row and persist on its own regen call.
+                return envelope
+
+            preference.profile_json = envelope
+            preference.profile_version = CURRENT_TEMPLATE_VERSION
+            preference.profile_generated_at = datetime.utcnow()
+            session.commit()
+            return envelope
 
     def get_or_create_default_tenant(self) -> Tenant:
         default_id = os.getenv(

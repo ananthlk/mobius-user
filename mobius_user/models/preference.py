@@ -4,7 +4,7 @@ User preference model.
 
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, SmallInteger
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -33,6 +33,12 @@ class UserPreference(Base):
     autonomy_routine_tasks = Column(String(20), default="confirm_first", nullable=True)
     autonomy_sensitive_tasks = Column(String(20), default="confirm_first", nullable=True)
     display_preferences_json = Column(JSONB, nullable=True)
+
+    # Generated user profile envelope — see services/prompt_builder.py.
+    # Lazy-regenerated on /me when profile_version != current template version.
+    profile_json = Column(JSONB, nullable=True)
+    profile_version = Column(SmallInteger, nullable=True)
+    profile_generated_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

@@ -240,6 +240,9 @@ def logout(body: LogoutBody = LogoutBody()):
 @router.get("/me")
 def me(user: AppUser = Depends(_get_current_user)):
     activities = []
+    profile_envelope = None
+    auth_service = get_auth_service()
+
     with get_db_session() as session:
         user_activities = (
             session.query(UserActivity).filter(UserActivity.user_id == user.user_id).all()
@@ -259,6 +262,19 @@ def me(user: AppUser = Depends(_get_current_user)):
             .filter(UserPreference.user_id == user.user_id)
             .first()
         )
+
+        # Lazy-regenerate the profile envelope when stale. Pure-Python build,
+        # no LLM — safe to do inline on a read.
+        if preference is not None:
+            from mobius_user.services.prompt_builder import CURRENT_TEMPLATE_VERSION
+            stored = preference.profile_json
+            stored_version = preference.profile_version
+            if stored and stored_version == CURRENT_TEMPLATE_VERSION:
+                profile_envelope = stored
+            # Stale or missing → regenerate via the service helper (its own
+            # session handles the write).
+        if preference is None or profile_envelope is None:
+            profile_envelope = auth_service.regenerate_user_profile(user.user_id)
 
     return {
         "ok": True,
@@ -289,6 +305,7 @@ def me(user: AppUser = Depends(_get_current_user)):
             }
             if preference
             else None,
+            "profile": profile_envelope,
         },
     }
 
@@ -337,7 +354,10 @@ def complete_onboarding(body: OnboardingBody, user: AppUser = Depends(_get_curre
 
         session.commit()
 
-    return {"ok": True, "message": "Onboarding completed"}
+    # Regenerate the profile envelope so consumers picking up /me right
+    # after onboarding see fresh data without an extra round trip.
+    profile = get_auth_service().regenerate_user_profile(user.user_id)
+    return {"ok": True, "message": "Onboarding completed", "profile": profile}
 
 
 @router.post("/check-email")
@@ -435,4 +455,5 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
 
         session.commit()
 
-    return {"ok": True, "message": "Preferences updated"}
+    profile = get_auth_service().regenerate_user_profile(user.user_id)
+    return {"ok": True, "message": "Preferences updated", "profile": profile}
