@@ -24,12 +24,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 # Load .env from repo root if present (dev convenience). In Cloud Run the
 # environment is provided via --set-env-vars / --set-secrets so this is a no-op.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from mobius_user.db.session import init_db  # noqa: E402
+from mobius_user.routes.admin import router as admin_router  # noqa: E402
 from mobius_user.routes.fastapi_auth import router as auth_router  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -109,3 +111,10 @@ def public_config() -> dict:
 
 
 app.include_router(auth_router, prefix="/api/v1/auth")
+app.include_router(admin_router, prefix="/api/v1/admin")
+
+
+@app.get("/admin")
+def admin_page():
+    """Serve the static admin dashboard. Auth happens client-side via the page."""
+    return FileResponse(Path(__file__).resolve().parent / "static" / "admin.html")

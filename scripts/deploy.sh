@@ -122,6 +122,7 @@ SET_ENV_VARS=(
     "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}"
     "MOBIUS_EMAIL_SKILL_URL=${MOBIUS_EMAIL_SKILL_URL:-}"
     "CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-*}"
+    "MOBIUS_USER_ADMIN_EMAILS=${MOBIUS_USER_ADMIN_EMAILS:-}"
 )
 
 # Secrets — Cloud Run mounts each as an env var. ``name:latest`` pins to
