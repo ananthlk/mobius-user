@@ -10,6 +10,8 @@ from mobius_user.models.tenant import (
     AppUser,
     AuthProviderLink,
     UserSession,
+    UserAlias,
+    UserOrgMembership,
 )
 from mobius_user.models.activity import Activity, UserActivity, ACTIVITY_CODES
 from mobius_user.models.preference import UserPreference
@@ -20,6 +22,8 @@ __all__ = [
     "AppUser",
     "AuthProviderLink",
     "UserSession",
+    "UserAlias",
+    "UserOrgMembership",
     "Activity",
     "UserActivity",
     "ACTIVITY_CODES",

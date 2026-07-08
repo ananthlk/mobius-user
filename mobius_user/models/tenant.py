@@ -6,8 +6,8 @@ Owned by mobius_user database.
 
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from mobius_user.db.session import Base
@@ -59,6 +59,11 @@ class AppUser(Base):
     onboarding_completed_at = Column(DateTime, nullable=True)
     avatar_url = Column(String(500), nullable=True)
 
+    is_agent = Column(Boolean, default=False, nullable=False)
+    # Agents keep their pre-existing assignee handle ("agent:{name}");
+    # humans have no canonical_handle and derive "user:{user_id}".
+    canonical_handle = Column(String(255), nullable=True, unique=True)
+
     tenant = relationship("Tenant", back_populates="users")
     role = relationship("Role", back_populates="users")
     auth_providers = relationship(
@@ -73,6 +78,21 @@ class AppUser(Base):
     preference = relationship(
         "UserPreference", back_populates="user", uselist=False
     )
+    aliases = relationship(
+        "UserAlias", back_populates="user", cascade="all, delete-orphan"
+    )
+    org_memberships = relationship(
+        "UserOrgMembership", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    @property
+    def assignee_ref(self) -> str:
+        """Canonical task-assignee reference.
+
+        Contract with mobius-task-manager: humans are ``user:{user_id}``,
+        agents keep their grandfathered ``agent:{name}`` handle.
+        """
+        return self.canonical_handle or f"user:{self.user_id}"
 
     @property
     def greeting_name(self) -> str:
@@ -101,6 +121,54 @@ class AuthProviderLink(Base):
     last_used_at = Column(DateTime, nullable=True)
 
     user = relationship("AppUser", back_populates="auth_providers")
+
+
+class UserAlias(Base):
+    """Natural-language handles for a user ("sam", "sammy").
+
+    Powers ranked candidate resolution in /users/resolve. Collisions across
+    users are expected — the resolver ranks, the caller disambiguates.
+    """
+
+    __tablename__ = "user_alias"
+    __table_args__ = (UniqueConstraint("user_id", "alias", name="uq_user_alias_user_alias"),)
+
+    alias_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("app_user.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    alias = Column(String(255), nullable=False)
+    weight = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("AppUser", back_populates="aliases")
+
+
+class UserOrgMembership(Base):
+    """Org scoping for task queues.
+
+    org_name is the task/platform org display string — free text today,
+    deliberately NOT tenant_id. roles uses the task-routing vocabulary
+    (open set: credentialing_coordinator, rag_admin, corpus_curator, ...);
+    membership lives here, which roles route which task types is owned by
+    the task-manager contract layer.
+    """
+
+    __tablename__ = "user_org_membership"
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("app_user.user_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    org_name = Column(String(255), primary_key=True)
+    roles = Column(ARRAY(String(100)), default=list, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = relationship("AppUser", back_populates="org_memberships")
 
 
 class UserSession(Base):

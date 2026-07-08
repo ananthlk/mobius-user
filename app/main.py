@@ -33,6 +33,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from mobius_user.db.session import init_db  # noqa: E402
 from mobius_user.routes.admin import router as admin_router  # noqa: E402
 from mobius_user.routes.fastapi_auth import router as auth_router  # noqa: E402
+from mobius_user.routes.users import router as users_router  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ def public_config() -> dict:
 
 app.include_router(auth_router, prefix="/api/v1/auth")
 app.include_router(admin_router, prefix="/api/v1/admin")
+app.include_router(users_router, prefix="/api/v1/users")
 
 
 @app.get("/admin")

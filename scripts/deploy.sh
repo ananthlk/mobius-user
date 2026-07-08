@@ -130,6 +130,7 @@ SET_ENV_VARS=(
 SET_SECRETS=(
     "JWT_SECRET=jwt-secret:latest"
     "DB_PASSWORD=db-password:latest"
+    "MOBIUS_USER_INTERNAL_KEY=mobius-user-internal-key:latest"
 )
 
 # ── Deploy ──────────────────────────────────────────────────────────
