@@ -105,6 +105,32 @@ def _master_org_lookup(org_slug: str) -> tuple[Optional[dict], bool]:
     return None, False
 
 
+def _master_org_resolve(name: str) -> Optional[dict]:
+    """Free-text → canonical org via the master's POST /org/resolve.
+
+    Returns {org_slug, display_name, matched_via} or None (unknown name,
+    endpoint not deployed yet, or master unreachable — callers already have
+    a definitive-404 answer from the direct lookup, so None just means the
+    fallback couldn't improve on it).
+    """
+    import requests
+
+    try:
+        resp = requests.post(
+            f"{_master_org_url()}/org/resolve", json={"name": name}, timeout=3
+        )
+    except requests.RequestException as exc:
+        logger.warning("Master /org/resolve unreachable for %r: %s", name, exc)
+        return None
+    if not resp.ok:
+        return None
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    return body if body.get("org_slug") else None
+
+
 # ── Auth gates ────────────────────────────────────────────────────────────
 
 
@@ -477,10 +503,18 @@ def upsert_membership(request: Request, user_id: str, org_slug: str, body: Membe
 
     master_org, reachable = _master_org_lookup(slug)
     if reachable and master_org is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unknown org_slug '{slug}' in master org registry",
-        )
+        # Direct slug miss — the caller may have passed a display name or
+        # alias; let the master's free-text resolver have a shot before
+        # rejecting ("David Lawrence Center for Behavioral Health" should
+        # land on the canonical slug, not 422).
+        resolved = _master_org_resolve(org_slug.strip())
+        if resolved is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown org_slug '{slug}' in master org registry",
+            )
+        slug = resolved["org_slug"]
+        master_org = {"org_name": resolved.get("display_name")}
     display_name = (master_org or {}).get("org_name") or slug
 
     roles = sorted({r.strip() for r in body.roles if r.strip()})
