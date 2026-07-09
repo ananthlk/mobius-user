@@ -327,6 +327,74 @@ def resolve_users(
         }
 
 
+@router.get("/directory")
+def org_directory(
+    request: Request,
+    org_slug: str = Query(..., min_length=1, max_length=255),
+    q: Optional[str] = Query(None, max_length=255, description="Optional typeahead filter"),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Org-scoped member directory — powers @-mention autocomplete.
+
+    Empty q returns the whole org roster (the default list when the user
+    has just typed '@'); q narrows by name/email prefix-then-substring.
+    Unlike /resolve, org_slug here is a hard filter: coworker mention
+    lists must not leak users from other orgs.
+    """
+    _require_reader(request)
+    slug = _slugify(org_slug)
+
+    with get_db_session() as session:
+        rows = (
+            session.query(AppUser, UserOrgMembership)
+            .join(UserOrgMembership, UserOrgMembership.user_id == AppUser.user_id)
+            .filter(
+                UserOrgMembership.org_slug == slug,
+                AppUser.status == "active",
+            )
+            .all()
+        )
+
+        needle = (q or "").strip().lower()
+
+        def rank(user: AppUser) -> int:
+            if not needle:
+                return 0
+            best = -1
+            for name in (
+                user.display_name,
+                user.first_name,
+                user.preferred_name,
+                user.email,
+            ):
+                lowered = (name or "").lower()
+                if not lowered:
+                    continue
+                if lowered.startswith(needle):
+                    best = max(best, 2)
+                elif needle in lowered:
+                    best = max(best, 1)
+            return best
+
+        members = []
+        for user, membership in rows:
+            score = rank(user)
+            if needle and score < 0:
+                continue
+            members.append((score, (user.display_name or "").lower(), user, membership))
+        members.sort(key=lambda t: (-t[0], t[1]))
+
+        return {
+            "ok": True,
+            "org_slug": slug,
+            "members": [
+                {**_candidate(u), "roles": list(m.roles or [])}
+                for _, _, u, m in members[:limit]
+            ],
+            "total": len(members),
+        }
+
+
 @router.get("/by-identity")
 def resolve_by_identity(
     request: Request,
