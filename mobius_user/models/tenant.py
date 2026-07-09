@@ -147,13 +147,16 @@ class UserAlias(Base):
 
 
 class UserOrgMembership(Base):
-    """Org scoping for task queues.
+    """Org scoping for task queues and sign-in context.
 
-    org_name is the task/platform org display string — free text today,
-    deliberately NOT tenant_id. roles uses the task-routing vocabulary
-    (open set: credentialing_coordinator, rag_admin, corpus_curator, ...);
-    membership lives here, which roles route which task types is owned by
-    the task-manager contract layer.
+    org_slug is the canonical key from the master org registry owned by the
+    provider-roster-credentialing service (Ananth's ownership call,
+    2026-07-08) — validated against its API at write time, no cross-DB FK.
+    org_display_name is denormalized at write time so reads never call the
+    master. roles uses the task-routing vocabulary (open set:
+    credentialing_coordinator, rag_admin, corpus_curator, ...); membership
+    lives here, which roles route which task types is owned by the
+    task-manager contract layer.
     """
 
     __tablename__ = "user_org_membership"
@@ -163,7 +166,8 @@ class UserOrgMembership(Base):
         ForeignKey("app_user.user_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    org_name = Column(String(255), primary_key=True)
+    org_slug = Column(String(255), primary_key=True)
+    org_display_name = Column(String(255), nullable=True)
     roles = Column(ARRAY(String(100)), default=list, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

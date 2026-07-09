@@ -15,7 +15,7 @@ import logging
 from mobius_user.services.auth_service import get_auth_service, get_user_from_token
 from mobius_user.services.welcome_email import send_welcome_email
 from mobius_user.db.session import get_db_session
-from mobius_user.models.tenant import AppUser
+from mobius_user.models.tenant import AppUser, UserOrgMembership
 from mobius_user.models.activity import Activity, UserActivity
 from mobius_user.models.preference import UserPreference
 
@@ -276,6 +276,17 @@ def me(user: AppUser = Depends(_get_current_user)):
         if preference is None or profile_envelope is None:
             profile_envelope = auth_service.regenerate_user_profile(user.user_id)
 
+        org_memberships = [
+            {
+                "org_slug": m.org_slug,
+                "display_name": m.org_display_name or m.org_slug,
+                "roles": list(m.roles or []),
+            }
+            for m in session.query(UserOrgMembership)
+            .filter(UserOrgMembership.user_id == user.user_id)
+            .all()
+        ]
+
     return {
         "ok": True,
         "user": {
@@ -289,6 +300,10 @@ def me(user: AppUser = Depends(_get_current_user)):
             "locale": user.locale,
             "avatar_url": user.avatar_url,
             "is_onboarded": user.is_onboarded,
+            # Canonical org context — org_slug from the master org registry
+            # (provider-roster-credentialing). Flows to every consumer that
+            # authenticates via /me.
+            "org_memberships": org_memberships,
             "activities": activities,
             "preference": {
                 "tone": preference.tone if preference else "professional",

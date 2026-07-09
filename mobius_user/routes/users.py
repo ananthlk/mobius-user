@@ -59,6 +59,52 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["users"])
 
 
+# ── Master org registry (provider-roster-credentialing) ──────────────────
+#
+# Ownership decision (Ananth, 2026-07-08): the roster/credentialing service
+# owns the master org registry; mobius-user consumes canonical org_slugs.
+
+
+def _master_org_url() -> str:
+    return (
+        os.getenv("MOBIUS_ROSTER_URL")
+        or "https://mobius-provider-roster-credentialing-ortabkknqa-uc.a.run.app"
+    ).rstrip("/")
+
+
+def _slugify(value: str) -> str:
+    import re
+
+    return re.sub(r"(^-+|-+$)", "", re.sub(r"[^a-z0-9]+", "-", value.strip().lower()))
+
+
+def _master_org_lookup(org_slug: str) -> tuple[Optional[dict], bool]:
+    """Look up a slug in the master registry.
+
+    Returns (org, reachable): org is None when the master definitively does
+    not know the slug; reachable=False means the master couldn't be asked —
+    callers accept the write unvalidated rather than blocking enrollment on
+    a master outage.
+    """
+    import requests
+
+    try:
+        resp = requests.get(f"{_master_org_url()}/org/{org_slug}", timeout=3)
+    except requests.RequestException as exc:
+        logger.warning("Master org registry unreachable for %s: %s", org_slug, exc)
+        return None, False
+    if resp.status_code == 404:
+        return None, True
+    if resp.ok:
+        try:
+            return resp.json(), True
+        except ValueError:
+            logger.warning("Master org registry returned non-JSON for %s", org_slug)
+            return None, False
+    logger.warning("Master org registry returned %s for %s", resp.status_code, org_slug)
+    return None, False
+
+
 # ── Auth gates ────────────────────────────────────────────────────────────
 
 
@@ -112,20 +158,32 @@ def _candidate(user: AppUser) -> dict:
     }
 
 
-def _profile(session, user: AppUser) -> dict:
-    memberships = (
+def _memberships(session, user_id) -> list[dict]:
+    rows = (
         session.query(UserOrgMembership)
-        .filter(UserOrgMembership.user_id == user.user_id)
+        .filter(UserOrgMembership.user_id == user_id)
         .all()
     )
+    return [
+        {
+            "org_slug": m.org_slug,
+            "display_name": m.org_display_name or m.org_slug,
+            "roles": list(m.roles or []),
+        }
+        for m in rows
+    ]
+
+
+def _profile(session, user: AppUser) -> dict:
+    memberships = _memberships(session, user.user_id)
     aliases = (
         session.query(UserAlias).filter(UserAlias.user_id == user.user_id).all()
     )
     return {
         **_candidate(user),
         "status": user.status,
-        "org_memberships": [m.org_name for m in memberships],
-        "roles_by_org": {m.org_name: list(m.roles or []) for m in memberships},
+        "org_memberships": memberships,
+        "roles_by_org": {m["org_slug"]: m["roles"] for m in memberships},
         "aliases": [a.alias for a in aliases],
     }
 
@@ -186,12 +244,13 @@ def resolve_users(
 
         org_members: set[uuid.UUID] = set()
         if org and by_id:
+            # Accept a canonical slug or a display name — slugify either way.
             org_members = {
                 m.user_id
                 for m in session.query(UserOrgMembership)
                 .filter(
                     UserOrgMembership.user_id.in_(list(by_id)),
-                    UserOrgMembership.org_name == org,
+                    UserOrgMembership.org_slug == _slugify(org),
                 )
                 .all()
             }
@@ -281,7 +340,13 @@ def resolve_by_identity(
         if user is None or user.status != "active":
             raise HTTPException(status_code=404, detail="Unknown identity")
 
-        return {"ok": True, "user": _candidate(user)}
+        return {
+            "ok": True,
+            "user": {
+                **_candidate(user),
+                "org_memberships": _memberships(session, user.user_id),
+            },
+        }
 
 
 @router.get("/{user_id}")
@@ -394,14 +459,29 @@ class MembershipBody(BaseModel):
     roles: list[str] = Field(default_factory=list, max_length=50)
 
 
-@router.put("/{user_id}/orgs/{org_name}")
-def upsert_membership(request: Request, user_id: str, org_name: str, body: MembershipBody):
+@router.put("/{user_id}/orgs/{org_slug}")
+def upsert_membership(request: Request, user_id: str, org_slug: str, body: MembershipBody):
+    """Enroll a user into an org by canonical slug.
+
+    The slug must exist in the master org registry (provider-roster-
+    credentialing). Definitively unknown → 422; master unreachable → the
+    write is accepted unvalidated (validated:false) so enrollment never
+    hard-depends on the master being up.
+    """
     _require_writer(request)
     uid = _existing_user_id(user_id)
-    org = org_name.strip()
-    if not org or org.startswith("_"):
+    slug = _slugify(org_slug)
+    if not slug or org_slug.strip().startswith("_"):
         # _shared_ / _payor_registry_ are system scopes, not orgs
-        raise HTTPException(status_code=422, detail="Invalid org name")
+        raise HTTPException(status_code=422, detail="Invalid org slug")
+
+    master_org, reachable = _master_org_lookup(slug)
+    if reachable and master_org is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown org_slug '{slug}' in master org registry",
+        )
+    display_name = (master_org or {}).get("org_name") or slug
 
     roles = sorted({r.strip() for r in body.roles if r.strip()})
     with get_db_session() as session:
@@ -409,21 +489,33 @@ def upsert_membership(request: Request, user_id: str, org_name: str, body: Membe
             session.query(UserOrgMembership)
             .filter(
                 UserOrgMembership.user_id == uid,
-                UserOrgMembership.org_name == org,
+                UserOrgMembership.org_slug == slug,
             )
             .first()
         )
         if row:
             row.roles = roles
+            row.org_display_name = display_name
             row.updated_at = datetime.utcnow()
         else:
-            session.add(UserOrgMembership(user_id=uid, org_name=org, roles=roles))
+            session.add(
+                UserOrgMembership(
+                    user_id=uid, org_slug=slug, org_display_name=display_name, roles=roles
+                )
+            )
         session.commit()
-        return {"ok": True, "user_id": str(uid), "org_name": org, "roles": roles}
+        return {
+            "ok": True,
+            "user_id": str(uid),
+            "org_slug": slug,
+            "display_name": display_name,
+            "roles": roles,
+            "validated": bool(master_org),
+        }
 
 
-@router.delete("/{user_id}/orgs/{org_name}")
-def remove_membership(request: Request, user_id: str, org_name: str):
+@router.delete("/{user_id}/orgs/{org_slug}")
+def remove_membership(request: Request, user_id: str, org_slug: str):
     _require_writer(request)
     uid = _existing_user_id(user_id)
     with get_db_session() as session:
@@ -431,7 +523,7 @@ def remove_membership(request: Request, user_id: str, org_name: str):
             session.query(UserOrgMembership)
             .filter(
                 UserOrgMembership.user_id == uid,
-                UserOrgMembership.org_name == org_name,
+                UserOrgMembership.org_slug == _slugify(org_slug),
             )
             .delete()
         )
