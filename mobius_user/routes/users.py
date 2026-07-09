@@ -366,11 +366,26 @@ def resolve_by_identity(
         if user is None or user.status != "active":
             raise HTTPException(status_code=404, detail="Unknown identity")
 
+        # Greeting contract for chat's whoami: name to greet with + whether
+        # the user wants a greeting at all (user_preference.greeting_enabled,
+        # default true). Riding on by-identity keeps chat at one call per
+        # pageload.
+        from mobius_user.models.preference import UserPreference
+
+        pref = (
+            session.query(UserPreference)
+            .filter(UserPreference.user_id == user.user_id)
+            .first()
+        )
         return {
             "ok": True,
             "user": {
                 **_candidate(user),
                 "org_memberships": _memberships(session, user.user_id),
+                "greeting": {
+                    "name": user.greeting_name,
+                    "enabled": pref.greeting_enabled if pref else True,
+                },
             },
         }
 
