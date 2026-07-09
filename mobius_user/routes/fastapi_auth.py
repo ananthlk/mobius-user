@@ -89,6 +89,9 @@ class PreferencesBody(BaseModel):
     autonomy_routine_tasks: Optional[str] = None
     autonomy_sensitive_tasks: Optional[str] = None
     activities: Optional[list[str]] = None
+    # Free-text org name or canonical slug; resolved against the master org
+    # registry (provider-roster-credentialing). Empty string = no-op.
+    organization: Optional[str] = None
 
 
 def _get_tenant_id(tenant_id_str: Optional[str]) -> uuid.UUID:
@@ -451,6 +454,54 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
             preference.greeting_enabled = body.greeting_enabled
         if body.ai_experience_level is not None:
             preference.ai_experience_level = body.ai_experience_level
+
+        # Org membership via the master org registry. Single-org semantics
+        # from this surface: a changed org replaces existing memberships
+        # (roles reset — role grants are admin-scoped, not self-serve);
+        # an unchanged org is a no-op that preserves roles.
+        if body.organization is not None and body.organization.strip():
+            from mobius_user.models.tenant import UserOrgMembership
+            from mobius_user.routes.users import (
+                _master_org_lookup,
+                _master_org_resolve,
+                _slugify,
+            )
+
+            raw = body.organization.strip()
+            slug = _slugify(raw)
+            master_org, reachable = _master_org_lookup(slug)
+            if reachable and master_org is None:
+                resolved = _master_org_resolve(raw)
+                if resolved is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Organization '{raw}' not found in the org registry",
+                    )
+                slug = resolved["org_slug"]
+                master_org = {"org_name": resolved.get("display_name")}
+            display_name = (master_org or {}).get("org_name") or raw
+
+            existing = (
+                session.query(UserOrgMembership)
+                .filter(UserOrgMembership.user_id == user.user_id)
+                .all()
+            )
+            if not any(m.org_slug == slug for m in existing):
+                for m in existing:
+                    session.delete(m)
+                session.add(
+                    UserOrgMembership(
+                        user_id=user.user_id,
+                        org_slug=slug,
+                        org_display_name=display_name,
+                        roles=[],
+                    )
+                )
+            else:
+                for m in existing:
+                    if m.org_slug == slug and display_name:
+                        m.org_display_name = display_name
+
         if body.autonomy_routine_tasks is not None:
             preference.autonomy_routine_tasks = body.autonomy_routine_tasks
         if body.autonomy_sensitive_tasks is not None:
