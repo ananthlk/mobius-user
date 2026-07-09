@@ -83,6 +83,9 @@ class PreferencesBody(BaseModel):
     locale: Optional[str] = None
     tone: Optional[str] = None
     greeting_enabled: Optional[bool] = None
+    # Was missing — onboarding could set it but no update path existed, so
+    # users were locked to their day-one answer forever.
+    ai_experience_level: Optional[str] = None
     autonomy_routine_tasks: Optional[str] = None
     autonomy_sensitive_tasks: Optional[str] = None
     activities: Optional[list[str]] = None
@@ -446,6 +449,8 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
             preference.tone = body.tone
         if body.greeting_enabled is not None:
             preference.greeting_enabled = body.greeting_enabled
+        if body.ai_experience_level is not None:
+            preference.ai_experience_level = body.ai_experience_level
         if body.autonomy_routine_tasks is not None:
             preference.autonomy_routine_tasks = body.autonomy_routine_tasks
         if body.autonomy_sensitive_tasks is not None:
