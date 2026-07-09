@@ -73,9 +73,13 @@ def _master_org_url() -> str:
 
 
 def _slugify(value: str) -> str:
+    # Underscores are preserved: payor org slugs use the lexicon underscore
+    # convention (sunshine_health) while customer/internal/system slugs use
+    # the org-master hyphen convention — the slug encodes which authority
+    # owns the org, so we must not translate between the two.
     import re
 
-    return re.sub(r"(^-+|-+$)", "", re.sub(r"[^a-z0-9]+", "-", value.strip().lower()))
+    return re.sub(r"(^-+|-+$)", "", re.sub(r"[^a-z0-9_]+", "-", value.strip().lower()))
 
 
 def _master_org_lookup(org_slug: str) -> tuple[Optional[dict], bool]:
@@ -97,10 +101,16 @@ def _master_org_lookup(org_slug: str) -> tuple[Optional[dict], bool]:
         return None, True
     if resp.ok:
         try:
-            return resp.json(), True
+            org = resp.json()
         except ValueError:
             logger.warning("Master org registry returned non-JSON for %s", org_slug)
             return None, False
+        # Tombstones (merged/quarantined rows) still 200 on direct GET but
+        # must not validate an enrollment — treat as a definitive miss so
+        # the /resolve fallback chases to the canonical target instead.
+        if org.get("status") in ("merged", "quarantined"):
+            return None, True
+        return org, True
     logger.warning("Master org registry returned %s for %s", resp.status_code, org_slug)
     return None, False
 
