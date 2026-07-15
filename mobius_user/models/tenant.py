@@ -169,6 +169,12 @@ class UserOrgMembership(Base):
     org_slug = Column(String(255), primary_key=True)
     org_display_name = Column(String(255), nullable=True)
     roles = Column(ARRAY(String(100)), default=list, nullable=False)
+    # Approval flow: self-claims land 'pending'; admin/invite grants and
+    # approvals are 'active'. Every membership read that implies trust
+    # (org_memberships, directory, resolve boost) filters to active.
+    status = Column(String(20), default="active", nullable=False)
+    approved_by = Column(String(255), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

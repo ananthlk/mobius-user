@@ -298,16 +298,27 @@ def me(user: AppUser = Depends(_get_current_user)):
         if preference is None or profile_envelope is None:
             profile_envelope = auth_service.regenerate_user_profile(user.user_id)
 
-        org_memberships = [
-            {
-                "org_slug": m.org_slug,
-                "display_name": m.org_display_name or m.org_slug,
-                "roles": list(m.roles or []),
-            }
-            for m in session.query(UserOrgMembership)
+        all_rows = (
+            session.query(UserOrgMembership)
             .filter(UserOrgMembership.user_id == user.user_id)
             .all()
-        ]
+        )
+
+        def _rows(status: str) -> list[dict]:
+            return [
+                {
+                    "org_slug": m.org_slug,
+                    "display_name": m.org_display_name or m.org_slug,
+                    "roles": list(m.roles or []),
+                }
+                for m in all_rows
+                if m.status == status
+            ]
+
+        # org_memberships = ACTIVE only; a pending self-claim must never
+        # read as membership to any consumer.
+        org_memberships = _rows("active")
+        pending_org_memberships = _rows("pending")
 
     return {
         "ok": True,
@@ -324,8 +335,10 @@ def me(user: AppUser = Depends(_get_current_user)):
             "is_onboarded": user.is_onboarded,
             # Canonical org context — org_slug from the master org registry
             # (provider-roster-credentialing). Flows to every consumer that
-            # authenticates via /me.
+            # authenticates via /me. Active only; pending self-claims listed
+            # separately so surfaces can show "awaiting approval".
             "org_memberships": org_memberships,
+            "pending_org_memberships": pending_org_memberships,
             "activities": activities,
             "preference": {
                 "tone": preference.tone if preference else "professional",
@@ -563,12 +576,16 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
             if not any(m.org_slug == slug for m in existing):
                 for m in existing:
                     session.delete(m)
+                # Self-claims are PENDING until approved (membership-approval
+                # flow, green-lit 2026-07-15). Admin/invite grants activate
+                # immediately via the /users routes; this surface never does.
                 session.add(
                     UserOrgMembership(
                         user_id=user.user_id,
                         org_slug=slug,
                         org_display_name=display_name,
                         roles=[],
+                        status="pending",
                     )
                 )
             else:

@@ -197,10 +197,20 @@ def _candidate(user: AppUser) -> dict:
     }
 
 
-def _memberships(session, user_id) -> list[dict]:
+def _memberships(session, user_id, status: str = "active") -> list[dict]:
+    """Membership rows at the given status.
+
+    Every consumer that treats membership as trust (org_memberships in
+    profile/by-identity/me, directory, resolve boost, instant-RAG org-tier
+    filtering) reads ACTIVE only — a pending self-claim must never behave
+    like membership.
+    """
     rows = (
         session.query(UserOrgMembership)
-        .filter(UserOrgMembership.user_id == user_id)
+        .filter(
+            UserOrgMembership.user_id == user_id,
+            UserOrgMembership.status == status,
+        )
         .all()
     )
     return [
@@ -213,7 +223,7 @@ def _memberships(session, user_id) -> list[dict]:
     ]
 
 
-def _welcome_block(session, user: AppUser, pref, memberships: list[dict]) -> dict:
+def _welcome_block(session, user: AppUser, pref, memberships: list[dict], pending: list[dict] | None = None) -> dict:
     """Tailored-onboarding contract (docs/welcome-onboarding-spec.md §2).
 
     Always present; server-computed; chat decides when to render. Welcome
@@ -253,7 +263,9 @@ def _welcome_block(session, user: AppUser, pref, memberships: list[dict]) -> dic
         "first_session": session_count <= 1,
         "is_onboarded": user.is_onboarded,
         "arrival": "invited" if invited else "self_serve",
-        "org_status": "member" if memberships else "none",
+        "org_status": (
+            "member" if memberships else ("pending" if pending else "none")
+        ),
         "roles": roles,
         "activities": [a.activity_code for _, a in activity_rows],
         "experience_level": (pref.ai_experience_level if pref else None) or "beginner",
@@ -270,6 +282,7 @@ def _profile(session, user: AppUser) -> dict:
         **_candidate(user),
         "status": user.status,
         "org_memberships": memberships,
+        "pending_org_memberships": _memberships(session, user.user_id, status="pending"),
         "roles_by_org": {m["org_slug"]: m["roles"] for m in memberships},
         "aliases": [a.alias for a in aliases],
     }
@@ -338,6 +351,7 @@ def resolve_users(
                 .filter(
                     UserOrgMembership.user_id.in_(list(by_id)),
                     UserOrgMembership.org_slug == _slugify(org),
+                    UserOrgMembership.status == "active",
                 )
                 .all()
             }
@@ -401,6 +415,7 @@ def org_directory(
             .join(UserOrgMembership, UserOrgMembership.user_id == AppUser.user_id)
             .filter(
                 UserOrgMembership.org_slug == slug,
+                UserOrgMembership.status == "active",
                 AppUser.status == "active",
             )
             .all()
@@ -443,6 +458,80 @@ def org_directory(
                 for _, _, u, m in members[:limit]
             ],
             "total": len(members),
+        }
+
+
+@router.get("/pending-memberships")
+def list_pending_memberships(
+    request: Request,
+    org_slug: Optional[str] = Query(None, max_length=255),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Approval queue: self-claimed memberships awaiting a decision.
+
+    Writer-gated — this is an admin surface (org-agent approval UI).
+    """
+    _require_writer(request)
+    with get_db_session() as session:
+        q = (
+            session.query(UserOrgMembership, AppUser)
+            .join(AppUser, AppUser.user_id == UserOrgMembership.user_id)
+            .filter(UserOrgMembership.status == "pending")
+        )
+        if org_slug:
+            q = q.filter(UserOrgMembership.org_slug == _slugify(org_slug))
+        rows = q.order_by(UserOrgMembership.created_at).limit(limit).all()
+        return {
+            "ok": True,
+            "pending": [
+                {
+                    "user_id": str(u.user_id),
+                    "display_name": u.display_name,
+                    "email": u.email,
+                    "org_slug": m.org_slug,
+                    "org_display_name": m.org_display_name,
+                    "claimed_at": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m, u in rows
+            ],
+        }
+
+
+@router.post("/{user_id}/orgs/{org_slug}/approve")
+def approve_membership(request: Request, user_id: str, org_slug: str):
+    """Approve a pending self-claimed membership (idempotent on active)."""
+    _require_writer(request)
+    uid = _existing_user_id(user_id)
+    slug = _slugify(org_slug)
+    approver = None
+    bearer = _bearer_user(request)
+    if bearer:
+        approver = bearer.email or str(bearer.user_id)
+
+    with get_db_session() as session:
+        row = (
+            session.query(UserOrgMembership)
+            .filter(
+                UserOrgMembership.user_id == uid,
+                UserOrgMembership.org_slug == slug,
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Unknown membership")
+        already = row.status == "active"
+        if not already:
+            row.status = "active"
+            row.approved_by = approver or "internal-key"
+            row.approved_at = datetime.utcnow()
+            row.updated_at = datetime.utcnow()
+            session.commit()
+        return {
+            "ok": True,
+            "user_id": str(uid),
+            "org_slug": slug,
+            "status": "active",
+            "already_active": already,
         }
 
 
@@ -507,16 +596,18 @@ def resolve_by_identity(
             .first()
         )
         memberships = _memberships(session, user.user_id)
+        pending = _memberships(session, user.user_id, status="pending")
         return {
             "ok": True,
             "user": {
                 **_candidate(user),
                 "org_memberships": memberships,
+                "pending_org_memberships": pending,
                 "greeting": {
                     "name": user.greeting_name,
                     "enabled": pref.greeting_enabled if pref else True,
                 },
-                "welcome": _welcome_block(session, user, pref, memberships),
+                "welcome": _welcome_block(session, user, pref, memberships, pending),
             },
         }
 
@@ -716,11 +807,23 @@ def upsert_membership(request: Request, user_id: str, org_slug: str, body: Membe
         if row:
             row.roles = roles
             row.org_display_name = display_name
+            # Admin PUT doubles as approval: a pending self-claim touched by
+            # an admin grant activates.
+            if row.status != "active":
+                row.status = "active"
+                row.approved_by = "admin-grant"
+                row.approved_at = datetime.utcnow()
             row.updated_at = datetime.utcnow()
         else:
             session.add(
                 UserOrgMembership(
-                    user_id=uid, org_slug=slug, org_display_name=display_name, roles=roles
+                    user_id=uid,
+                    org_slug=slug,
+                    org_display_name=display_name,
+                    roles=roles,
+                    status="active",
+                    approved_by="admin-grant",
+                    approved_at=datetime.utcnow(),
                 )
             )
         session.commit()
@@ -730,6 +833,7 @@ def upsert_membership(request: Request, user_id: str, org_slug: str, body: Membe
             "org_slug": slug,
             "display_name": display_name,
             "roles": roles,
+            "status": "active",
             "validated": bool(master_org),
         }
 
