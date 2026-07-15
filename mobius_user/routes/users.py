@@ -44,6 +44,7 @@ from mobius_user.models.tenant import (
     AuthProviderLink,
     UserAlias,
     UserOrgMembership,
+    UserSession,
 )
 from mobius_user.services.auth_service import get_auth_service, get_user_from_token
 from mobius_user.services import account_lifecycle
@@ -210,6 +211,54 @@ def _memberships(session, user_id) -> list[dict]:
         }
         for m in rows
     ]
+
+
+def _welcome_block(session, user: AppUser, pref, memberships: list[dict]) -> dict:
+    """Tailored-onboarding contract (docs/welcome-onboarding-spec.md §2).
+
+    Always present; server-computed; chat decides when to render. Welcome
+    content REFERENCES behavior the profile prompt ENFORCES — this block
+    carries the targeting signals only, never instructions.
+    """
+    from mobius_user.models.tenant import AuthToken
+    from mobius_user.models.activity import Activity, UserActivity
+
+    # First session = the user has at most one session row (the one that
+    # authenticated this request). Sturdier than last_login_at timing.
+    session_count = (
+        session.query(UserSession.session_id)
+        .filter(UserSession.user_id == user.user_id)
+        .limit(2)
+        .count()
+    )
+
+    invited = (
+        session.query(AuthToken.token_id)
+        .filter(AuthToken.user_id == user.user_id, AuthToken.purpose == "invite")
+        .first()
+        is not None
+    )
+
+    activity_rows = (
+        session.query(UserActivity, Activity)
+        .join(Activity, Activity.activity_id == UserActivity.activity_id)
+        .filter(UserActivity.user_id == user.user_id)
+        .all()
+    )
+    activity_rows.sort(key=lambda t: (not t[0].is_primary, t[1].display_order))
+
+    roles: list[str] = sorted({r for m in memberships for r in m["roles"]})
+
+    return {
+        "first_session": session_count <= 1,
+        "is_onboarded": user.is_onboarded,
+        "arrival": "invited" if invited else "self_serve",
+        "org_status": "member" if memberships else "none",
+        "roles": roles,
+        "activities": [a.activity_code for _, a in activity_rows],
+        "experience_level": (pref.ai_experience_level if pref else None) or "beginner",
+        "tone": (pref.tone if pref else None) or "professional",
+    }
 
 
 def _profile(session, user: AppUser) -> dict:
@@ -457,15 +506,17 @@ def resolve_by_identity(
             .filter(UserPreference.user_id == user.user_id)
             .first()
         )
+        memberships = _memberships(session, user.user_id)
         return {
             "ok": True,
             "user": {
                 **_candidate(user),
-                "org_memberships": _memberships(session, user.user_id),
+                "org_memberships": memberships,
                 "greeting": {
                     "name": user.greeting_name,
                     "enabled": pref.greeting_enabled if pref else True,
                 },
+                "welcome": _welcome_block(session, user, pref, memberships),
             },
         }
 
