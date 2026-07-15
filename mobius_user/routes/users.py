@@ -778,20 +778,22 @@ def upsert_membership(request: Request, user_id: str, org_slug: str, body: Membe
         # _shared_ / _payor_registry_ are system scopes, not orgs
         raise HTTPException(status_code=422, detail="Invalid org slug")
 
-    master_org, reachable = _master_org_lookup(slug)
-    if reachable and master_org is None:
-        # Direct slug miss — the caller may have passed a display name or
-        # alias; let the master's free-text resolver have a shot before
-        # rejecting ("David Lawrence Center for Behavioral Health" should
-        # land on the canonical slug, not 422).
-        resolved = _master_org_resolve(org_slug.strip())
-        if resolved is None:
+    # Resolve-first: POST /org/resolve returns the CANONICAL slug (chases
+    # merges, maps aliases), so a hand-slugified display name can never
+    # land a membership on a duplicate variant slug — the exact failure
+    # that split david-lawrence-center into two orgs. Direct GET is only
+    # the degraded path when the resolver is unavailable.
+    resolved = _master_org_resolve(org_slug.strip())
+    if resolved is not None:
+        slug = resolved["org_slug"]
+        master_org: Optional[dict] = {"org_name": resolved.get("display_name")}
+    else:
+        master_org, reachable = _master_org_lookup(slug)
+        if reachable and master_org is None:
             raise HTTPException(
                 status_code=422,
                 detail=f"Unknown org_slug '{slug}' in master org registry",
             )
-        slug = resolved["org_slug"]
-        master_org = {"org_name": resolved.get("display_name")}
     display_name = (master_org or {}).get("org_name") or slug
 
     roles = sorted({r.strip() for r in body.roles if r.strip()})

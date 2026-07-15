@@ -556,16 +556,20 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
 
             raw = body.organization.strip()
             slug = _slugify(raw)
-            master_org, reachable = _master_org_lookup(slug)
-            if reachable and master_org is None:
-                resolved = _master_org_resolve(raw)
-                if resolved is None:
+            # Resolve-first (mirrors PUT /orgs/{slug}): the resolver returns
+            # the CANONICAL slug, so a typed display name can never claim a
+            # duplicate variant slug. Direct GET is the degraded path only.
+            resolved = _master_org_resolve(raw)
+            if resolved is not None:
+                slug = resolved["org_slug"]
+                master_org = {"org_name": resolved.get("display_name")}
+            else:
+                master_org, reachable = _master_org_lookup(slug)
+                if reachable and master_org is None:
                     raise HTTPException(
                         status_code=422,
                         detail=f"Organization '{raw}' not found in the org registry",
                     )
-                slug = resolved["org_slug"]
-                master_org = {"org_name": resolved.get("display_name")}
             display_name = (master_org or {}).get("org_name") or raw
 
             existing = (
