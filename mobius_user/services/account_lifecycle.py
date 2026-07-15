@@ -149,25 +149,60 @@ def _find_valid_token(session, raw: str, purpose: str) -> Tuple[Optional[AuthTok
     return token, None
 
 
-def _upsert_membership(session, user_id: uuid.UUID, org_slug: str, roles: list[str]) -> None:
-    """Same semantics as PUT /api/v1/users/{user_id}/orgs/{org_name}."""
-    org = (org_slug or "").strip()
-    if not org or org.startswith("_"):
-        return
+def _upsert_membership(session, user_id: uuid.UUID, org_slug: str, roles: list[str]) -> dict:
+    """Same semantics as PUT /api/v1/users/{user_id}/orgs/{org_slug}:
+    slug validated against the master org registry (roster service),
+    display name denormalized at write time. Definitive-unknown slug →
+    membership skipped (the invite itself still proceeds — the org agent
+    can PUT the membership later); master unreachable → written unvalidated.
+    """
+    # Lazy import: routes.users imports this module at top level.
+    from mobius_user.routes.users import (
+        _master_org_lookup,
+        _master_org_resolve,
+        _slugify,
+    )
+
+    raw = (org_slug or "").strip()
+    slug = _slugify(raw)
+    if not slug or raw.startswith("_"):
+        return {"applied": False, "reason": "invalid_org_slug"}
+
+    master_org, reachable = _master_org_lookup(slug)
+    validated = master_org is not None
+    if reachable and master_org is None:
+        resolved = _master_org_resolve(raw)
+        if resolved is None:
+            logger.warning("invite: unknown org_slug %r — membership skipped", slug)
+            return {"applied": False, "reason": "unknown_org_slug", "org_slug": slug}
+        slug = resolved["org_slug"]
+        master_org = {"org_name": resolved.get("display_name")}
+        validated = True
+    display_name = (master_org or {}).get("org_name") or slug
+
     clean = sorted({r.strip() for r in (roles or []) if r.strip()})
     row = (
         session.query(UserOrgMembership)
         .filter(
             UserOrgMembership.user_id == user_id,
-            UserOrgMembership.org_name == org,
+            UserOrgMembership.org_slug == slug,
         )
         .first()
     )
     if row:
         row.roles = clean
+        row.org_display_name = display_name
         row.updated_at = datetime.utcnow()
     else:
-        session.add(UserOrgMembership(user_id=user_id, org_name=org, roles=clean))
+        session.add(
+            UserOrgMembership(
+                user_id=user_id,
+                org_slug=slug,
+                org_display_name=display_name,
+                roles=clean,
+            )
+        )
+    return {"applied": True, "org_slug": slug, "validated": validated, "roles": clean}
 
 
 # ── Public API ────────────────────────────────────────────────────────────
@@ -234,8 +269,9 @@ def create_or_reinvite_user(
             created_by=invited_by,
         )
 
+        membership = None
         if org_slug:
-            _upsert_membership(session, user.user_id, org_slug, roles or [])
+            membership = _upsert_membership(session, user.user_id, org_slug, roles or [])
 
         session.commit()
 
@@ -253,7 +289,7 @@ def create_or_reinvite_user(
         token_id=token_id,
     )
 
-    return {
+    out = {
         "ok": True,
         "created": created,
         "user_id": user_id,
@@ -262,6 +298,9 @@ def create_or_reinvite_user(
         "invite_expires_at": expires_at,
         "email_sent": email_sent,
     }
+    if membership is not None:
+        out["membership"] = membership
+    return out
 
 
 def set_password_with_token(*, raw_token: str, new_password: str) -> Tuple[Optional[uuid.UUID], Optional[str]]:
