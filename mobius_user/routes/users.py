@@ -46,9 +46,11 @@ from mobius_user.models.tenant import (
     UserOrgMembership,
 )
 from mobius_user.services.auth_service import get_auth_service, get_user_from_token
+from mobius_user.services import account_lifecycle
 
 try:
     from fastapi import APIRouter, HTTPException, Query, Request
+    from fastapi.responses import JSONResponse
 except ImportError:
     raise ImportError(
         "FastAPI is required for user routes. Install with: pip install mobius-user[fastapi]"
@@ -529,6 +531,46 @@ def enroll_agent(request: Request, body: AgentEnrollBody):
         session.refresh(user)
         logger.info("Enrolled agent principal %s (%s)", handle, user.user_id)
         return {"ok": True, "created": True, "user": _profile(session, user)}
+
+
+class InviteBody(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    first_name: Optional[str] = Field(None, max_length=100)
+    display_name: Optional[str] = Field(None, max_length=255)
+    org_slug: Optional[str] = Field(None, max_length=255)
+    roles: Optional[list[str]] = None
+    invited_by: Optional[str] = Field(None, max_length=255)
+
+
+@router.post("/invite")
+def invite_user(request: Request, body: InviteBody):
+    """Admin-create a pending employee account and email a set-password link.
+
+    Org-agent onboarding contract (2026-07-15). Idempotent for accounts
+    still in status=invited: re-inviting rotates the token, extends the
+    expiry, and resends the email. Existing active/disabled accounts
+    return 409 email_exists.
+    """
+    _require_writer(request)
+    tenant = get_auth_service().get_or_create_default_tenant()
+
+    result = account_lifecycle.create_or_reinvite_user(
+        tenant_id=tenant.tenant_id,
+        email=body.email,
+        first_name=body.first_name,
+        display_name=body.display_name,
+        org_slug=body.org_slug,
+        roles=body.roles,
+        invited_by=body.invited_by,
+    )
+
+    if not result.get("ok"):
+        if result.get("error") == "email_exists":
+            raise HTTPException(status_code=409, detail=result)
+        raise HTTPException(status_code=422, detail=result.get("error", "invalid"))
+
+    status_code = 201 if result.get("created") else 200
+    return JSONResponse(status_code=status_code, content=result)
 
 
 class AliasBody(BaseModel):

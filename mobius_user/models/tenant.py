@@ -199,3 +199,32 @@ class UserSession(Base):
         if self.revoked_at:
             return False
         return datetime.utcnow() < self.expires_at
+
+
+class AuthToken(Base):
+    """Single-use, expiring tokens for invite / password-reset links.
+
+    Only sha256(raw_token) is stored; the raw token lives exclusively in
+    the emailed link. consumed_at enforces single use.
+    """
+
+    __tablename__ = "auth_token"
+
+    token_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("app_user.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    purpose = Column(String(20), nullable=False)  # invite | reset
+    token_hash = Column(String(64), nullable=False, unique=True)
+    expires_at = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by = Column(String(255), nullable=True)
+
+    @property
+    def is_valid(self) -> bool:
+        if self.consumed_at:
+            return False
+        return datetime.utcnow() < self.expires_at

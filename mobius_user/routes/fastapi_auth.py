@@ -14,6 +14,7 @@ import logging
 
 from mobius_user.services.auth_service import get_auth_service, get_user_from_token
 from mobius_user.services.welcome_email import send_welcome_email
+from mobius_user.services import account_lifecycle
 from mobius_user.db.session import get_db_session
 from mobius_user.models.tenant import AppUser, UserOrgMembership
 from mobius_user.models.activity import Activity, UserActivity
@@ -75,6 +76,21 @@ class OnboardingBody(BaseModel):
 class CheckEmailBody(BaseModel):
     email: str
     tenant_id: Optional[str] = None
+
+
+class SetPasswordBody(BaseModel):
+    token: str
+    new_password: str
+
+
+class ResetRequestBody(BaseModel):
+    email: str
+    tenant_id: Optional[str] = None
+
+
+class ResetConfirmBody(BaseModel):
+    token: str
+    new_password: str
 
 
 class PreferencesBody(BaseModel):
@@ -401,6 +417,64 @@ def check_email(body: CheckEmailBody):
             },
         }
     return {"ok": True, "exists": False}
+
+
+@router.post("/set-password")
+def set_password(body: SetPasswordBody):
+    """Consume an invite token, set the password, activate + sign in.
+
+    Public: the single-use token IS the credential. Org-agent onboarding
+    contract (2026-07-15).
+    """
+    user_id, error = account_lifecycle.set_password_with_token(
+        raw_token=(body.token or "").strip(),
+        new_password=body.new_password or "",
+    )
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    auth_response = get_auth_service()._issue_session_for_user(user_id)
+    return {"ok": True, "message": "Password set", **auth_response}
+
+
+@router.post("/password-reset/request", status_code=202)
+def password_reset_request(body: ResetRequestBody, request: Request):
+    """Always 202 — never reveals whether the email has an account."""
+    email = (body.email or "").strip().lower()
+    client_ip = request.client.host if request.client else "unknown"
+    if not account_lifecycle.reset_request_throttle.allow(f"ip:{client_ip}"):
+        return {"ok": True}
+    if email and not account_lifecycle.reset_request_throttle.allow(f"email:{email}"):
+        return {"ok": True}
+
+    try:
+        account_lifecycle.request_password_reset(
+            tenant_id=_get_tenant_id(body.tenant_id), email=email
+        )
+    except Exception:
+        # Same contract as the throttled path: the caller learns nothing.
+        logger.warning("password_reset_request: raised", exc_info=True)
+    return {"ok": True}
+
+
+@router.post("/password-reset/confirm")
+def password_reset_confirm(body: ResetConfirmBody):
+    error = account_lifecycle.confirm_password_reset(
+        raw_token=(body.token or "").strip(),
+        new_password=body.new_password or "",
+    )
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return {"ok": True, "message": "Password updated. Please sign in."}
+
+
+@router.get("/token-info")
+def get_token_info(token: str, request: Request):
+    """Pre-flight for the set-password page: purpose, masked email, validity."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not account_lifecycle.token_info_throttle.allow(f"ip:{client_ip}"):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    return account_lifecycle.token_info(raw_token=(token or "").strip())
 
 
 @router.get("/activities")
