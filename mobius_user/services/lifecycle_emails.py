@@ -100,7 +100,14 @@ def _send(
         "mode": "raw",
     }
     try:
-        res = requests.post(f"{base}/email/send", json=payload, timeout=5)
+        # 30s timeout + one retry: the email skill runs min-instances=0, so
+        # the first send after idle cold-starts past a short timeout and the
+        # invite silently reports email_sent:false (idempotency_key makes the
+        # retry safe — the skill dedups if the first request actually landed).
+        try:
+            res = requests.post(f"{base}/email/send", json=payload, timeout=30)
+        except requests.RequestException:
+            res = requests.post(f"{base}/email/send", json=payload, timeout=30)
         if res.status_code >= 300:
             logger.warning(
                 "lifecycle_email: skill returned %s: %s", res.status_code, res.text[:200]
