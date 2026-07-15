@@ -6,8 +6,8 @@ Backs the org-agent employee-onboarding contract (2026-07-15):
   exists only inside the emailed link; we store sha256(token) so a DB
   leak cannot mint working links. purpose ∈ {invite, reset}.
 
-Revision ID: 004_auth_tokens
-Revises: 003_identity_directory
+Revision ID: 005_auth_tokens
+Revises: 004_membership_org_slug
 Create Date: 2026-07-15
 """
 from typing import Sequence, Union
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision: str = "004_auth_tokens"
-down_revision: Union[str, None] = "003_identity_directory"
+revision: str = "005_auth_tokens"
+down_revision: Union[str, None] = "004_membership_org_slug"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
