@@ -108,6 +108,9 @@ class PreferencesBody(BaseModel):
     # Free-text org name or canonical slug; resolved against the master org
     # registry (provider-roster-credentialing). Empty string = no-op.
     organization: Optional[str] = None
+    # Training-mode onboarding step 5 — hesitation chips (direct fear
+    # capture). Empty list = user skipped the step.
+    hesitations: Optional[list[str]] = None
 
 
 def _get_tenant_id(tenant_id_str: Optional[str]) -> uuid.UUID:
@@ -352,6 +355,7 @@ def me(user: AppUser = Depends(_get_current_user)):
                 "autonomy_sensitive_tasks": (
                     preference.autonomy_sensitive_tasks if preference else "confirm_first"
                 ),
+                "hesitations": list(preference.hesitations or []) if preference else [],
             }
             if preference
             else None,
@@ -541,6 +545,10 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
             preference.greeting_enabled = body.greeting_enabled
         if body.ai_experience_level is not None:
             preference.ai_experience_level = body.ai_experience_level
+        if body.hesitations is not None:
+            preference.hesitations = sorted(
+                {h.strip()[:50] for h in body.hesitations if h.strip()}
+            )
 
         # Org membership via the master org registry. Single-org semantics
         # from this surface: a changed org replaces existing memberships

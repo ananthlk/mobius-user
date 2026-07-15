@@ -5,7 +5,7 @@ User preference model.
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, SmallInteger
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from mobius_user.db.session import Base
@@ -33,6 +33,9 @@ class UserPreference(Base):
     autonomy_routine_tasks = Column(String(20), default="confirm_first", nullable=True)
     autonomy_sensitive_tasks = Column(String(20), default="confirm_first", nullable=True)
     display_preferences_json = Column(JSONB, nullable=True)
+    # Training-mode onboarding step 5: optional hesitation chips (direct
+    # fear capture). Empty = step skipped, never "no hesitations".
+    hesitations = Column(ARRAY(String(50)), default=list, nullable=False)
 
     # Generated user profile envelope — see services/prompt_builder.py.
     # Lazy-regenerated on /me when profile_version != current template version.
