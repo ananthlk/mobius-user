@@ -4,7 +4,7 @@ User preference model.
 
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, SmallInteger
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -47,6 +47,30 @@ class UserPreference(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     user = relationship("AppUser", back_populates="preference")
+
+
+class UserPreferenceAudit(Base):
+    """Append-only per-field preference change log.
+
+    Powers the training-mode edit-later-churn metric: a field re-edited
+    AFTER training capture signals mis-capture; `source` distinguishes
+    writers (training_mode / preferences_modal / api) so training's own
+    writes never count as churn.
+    """
+
+    __tablename__ = "user_preference_audit"
+
+    audit_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("app_user.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field = Column(String(50), nullable=False)
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
+    source = Column(String(30), nullable=True)
+    changed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def get_default_execution_mode(self, is_sensitive: bool = False) -> str:
         autonomy = (

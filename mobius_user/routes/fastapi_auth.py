@@ -5,6 +5,7 @@ Mount with: app.include_router(fastapi_auth_router, prefix="/api/v1/auth")
 Requires: fastapi (pip install mobius-user[fastapi])
 """
 
+import json
 import os
 import uuid
 from datetime import datetime
@@ -111,6 +112,10 @@ class PreferencesBody(BaseModel):
     # Training-mode onboarding step 5 — hesitation chips (direct fear
     # capture). Empty list = user skipped the step.
     hesitations: Optional[list[str]] = None
+    # Writer identity for the preference-audit trail (edit-later churn
+    # metric): "training_mode" | "preferences_modal" | default "api".
+    # Never stored on the preference itself.
+    source: Optional[str] = None
 
 
 def _get_tenant_id(tenant_id_str: Optional[str]) -> uuid.UUID:
@@ -525,11 +530,36 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
         if not db_user:
             raise HTTPException(status_code=404, detail="User not found")
 
+        from mobius_user.models.preference import UserPreferenceAudit
+
+        audit_source = (body.source or "api").strip()[:30]
+
+        def _audit(field: str, old, new) -> None:
+            """Append a change row when the value actually changed."""
+            def enc(v):
+                if v is None:
+                    return None
+                return v if isinstance(v, str) else json.dumps(v)
+            if old == new:
+                return
+            session.add(
+                UserPreferenceAudit(
+                    user_id=user.user_id,
+                    field=field,
+                    old_value=enc(old),
+                    new_value=enc(new),
+                    source=audit_source,
+                )
+            )
+
         if body.preferred_name is not None:
+            _audit("preferred_name", db_user.preferred_name, body.preferred_name)
             db_user.preferred_name = body.preferred_name
         if body.timezone is not None:
+            _audit("timezone", db_user.timezone, body.timezone)
             db_user.timezone = body.timezone
         if body.locale is not None:
+            _audit("locale", db_user.locale, body.locale)
             db_user.locale = body.locale
 
         preference = (
@@ -540,15 +570,20 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
             session.add(preference)
 
         if body.tone is not None:
+            _audit("tone", preference.tone, body.tone)
             preference.tone = body.tone
         if body.greeting_enabled is not None:
+            _audit("greeting_enabled", preference.greeting_enabled, body.greeting_enabled)
             preference.greeting_enabled = body.greeting_enabled
         if body.ai_experience_level is not None:
+            _audit("ai_experience_level", preference.ai_experience_level, body.ai_experience_level)
             preference.ai_experience_level = body.ai_experience_level
         if body.hesitations is not None:
-            preference.hesitations = sorted(
+            new_hesitations = sorted(
                 {h.strip()[:50] for h in body.hesitations if h.strip()}
             )
+            _audit("hesitations", list(preference.hesitations or []), new_hesitations)
+            preference.hesitations = new_hesitations
 
         # Org membership via the master org registry. Single-org semantics
         # from this surface: a changed org replaces existing memberships
@@ -586,6 +621,11 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
                 .all()
             )
             if not any(m.org_slug == slug for m in existing):
+                _audit(
+                    "organization",
+                    sorted(m.org_slug for m in existing) or None,
+                    [slug],
+                )
                 for m in existing:
                     session.delete(m)
                 # Self-claims are PENDING until approved (membership-approval
@@ -606,11 +646,21 @@ def update_preferences(body: PreferencesBody, user: AppUser = Depends(_get_curre
                         m.org_display_name = display_name
 
         if body.autonomy_routine_tasks is not None:
+            _audit("autonomy_routine_tasks", preference.autonomy_routine_tasks, body.autonomy_routine_tasks)
             preference.autonomy_routine_tasks = body.autonomy_routine_tasks
         if body.autonomy_sensitive_tasks is not None:
+            _audit("autonomy_sensitive_tasks", preference.autonomy_sensitive_tasks, body.autonomy_sensitive_tasks)
             preference.autonomy_sensitive_tasks = body.autonomy_sensitive_tasks
 
         if body.activities is not None:
+            old_codes = [
+                a.activity_code
+                for ua, a in session.query(UserActivity, Activity)
+                .join(Activity, Activity.activity_id == UserActivity.activity_id)
+                .filter(UserActivity.user_id == user.user_id)
+                .all()
+            ]
+            _audit("activities", sorted(old_codes), sorted(body.activities))
             session.query(UserActivity).filter(UserActivity.user_id == user.user_id).delete()
             for i, code in enumerate(body.activities):
                 activity = (
