@@ -16,14 +16,35 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
-CURRENT_TEMPLATE_VERSION = 1
+CURRENT_TEMPLATE_VERSION = 2
 
 
 # ── Phrasing knobs ─────────────────────────────────────────────────
+# Template v2 (2026-07-17): tone hints carry docs/tone-style-guide.md's
+# litmus tests verbatim. rendered_prompt is the LOAD-BEARING tone
+# instruction — chat's planner format rules defer to it (chat commit
+# 8636103) — so each hint must be strong enough to elicit the voice,
+# not just name it.
 _TONE_HINTS = {
-    "professional": "Use a professional tone — clear, direct, no slang.",
-    "friendly": "Use a warm, conversational tone — still concise.",
-    "concise": "Be concise. Skip pleasantries. Lead with the answer.",
+    "professional": (
+        "Tone: professional. Complete sentences, no contractions, exact "
+        "terminology, formal source citations. Open with the finding in a "
+        "full clause. Phrase offers as capability (\"I can \u2026\"). The "
+        "answer should read as if presented to a regulator."
+    ),
+    "friendly": (
+        "Tone: friendly. Contractions throughout. Open with a brief human "
+        "beat before the substance, translate jargon in passing, and keep "
+        "it the way you'd say it across a desk. At most one emoji, and "
+        "only where natural."
+    ),
+    "concise": (
+        "Tone: concise. Verdict first \u2014 start with the verdict noun or "
+        "verb. Sentence fragments preferred. NO bullet scaffolding, no "
+        "greetings, no hedging. Aim for about a third the length of a "
+        "professional answer \u2014 readable off a pager in a hallway. "
+        "Phrase offers as one word plus a question mark (\"Appeal?\")."
+    ),
 }
 
 _EXPERIENCE_HINTS = {
