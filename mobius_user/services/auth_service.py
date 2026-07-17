@@ -213,14 +213,14 @@ class AuthService:
                     email=email,
                 )
                 session.add(link)
-                # Invited-but-not-yet-activated account signing in via a
-                # verified OAuth email: the provider proved mailbox
-                # ownership, which is exactly what the invite link proves.
-                # MOBIUS_INVITE_GOOGLE_ACTIVATION=0 disables (policy flag,
-                # org-agent onboarding contract 2026-07-15).
+                # Policy (Ananth, 2026-07-17): invited accounts do NOT
+                # auto-activate on Google sign-in — explicit set-password
+                # activation is required. OFF is the code default;
+                # MOBIUS_INVITE_GOOGLE_ACTIVATION=1 is the explicit escape
+                # hatch if an org ever opts back in.
                 if (
                     existing.status == "invited"
-                    and os.getenv("MOBIUS_INVITE_GOOGLE_ACTIVATION", "1") != "0"
+                    and os.getenv("MOBIUS_INVITE_GOOGLE_ACTIVATION", "0") == "1"
                 ):
                     existing.status = "active"
                 session.commit()
