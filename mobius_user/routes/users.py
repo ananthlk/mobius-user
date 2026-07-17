@@ -461,6 +461,49 @@ def org_directory(
         }
 
 
+@router.get("/org/{org_slug}/members")
+def org_members(
+    request: Request,
+    org_slug: str,
+    limit: int = Query(200, ge=1, le=500),
+):
+    """Full org roster INCLUDING not-yet-activated accounts — admin surface.
+
+    Powers the org-agent dashboard's total/invited/active tracker. Unlike
+    /directory (mention lists — active-only trust semantics, deliberately
+    unchanged), this returns every membership at any status with both the
+    account status (invited|active|disabled) and the membership status
+    (active|pending). Writer-gated: roster composition is admin data.
+    """
+    _require_writer(request)
+    slug = _slugify(org_slug)
+    with get_db_session() as session:
+        rows = (
+            session.query(AppUser, UserOrgMembership)
+            .join(UserOrgMembership, UserOrgMembership.user_id == AppUser.user_id)
+            .filter(UserOrgMembership.org_slug == slug)
+            .order_by(AppUser.display_name)
+            .limit(limit)
+            .all()
+        )
+        return {
+            "ok": True,
+            "org_slug": slug,
+            "members": [
+                {
+                    "user_id": str(u.user_id),
+                    "display_name": u.display_name,
+                    "email": u.email,
+                    "is_agent": bool(u.is_agent),
+                    "roles": list(m.roles or []),
+                    "account_status": u.status,
+                    "membership_status": m.status,
+                }
+                for u, m in rows
+            ],
+        }
+
+
 @router.get("/pending-memberships")
 def list_pending_memberships(
     request: Request,
