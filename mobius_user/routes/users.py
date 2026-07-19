@@ -579,7 +579,13 @@ def approve_membership(request: Request, user_id: str, org_slug: str):
         if row is None:
             raise HTTPException(status_code=404, detail="Unknown membership")
         already = row.status == "active"
+        if row.status == "removed":
+            # Approval is for pending self-claims only — a removed member
+            # must come back via /restore (deliberate, stamped), never by
+            # slipping through the approval queue.
+            raise HTTPException(status_code=409, detail="Membership is removed; use /restore")
         if not already:
+            _audit_membership(session, uid, slug, row.status, "active", approver or "internal-key")
             row.status = "active"
             row.approved_by = approver or "internal-key"
             row.approved_at = datetime.utcnow()
@@ -869,9 +875,11 @@ def upsert_membership(request: Request, user_id: str, org_slug: str, body: Membe
         if row:
             row.roles = roles
             row.org_display_name = display_name
-            # Admin PUT doubles as approval: a pending self-claim touched by
-            # an admin grant activates.
+            # Admin PUT doubles as approval AND as the deliberate re-join
+            # path for removed members — either way the transition gets an
+            # append-only audit row (no-history-loss rule).
             if row.status != "active":
+                _audit_membership(session, uid, slug, row.status, "active", _actor(request))
                 row.status = "active"
                 row.approved_by = "admin-grant"
                 row.approved_at = datetime.utcnow()
@@ -919,6 +927,24 @@ def remove_membership(request: Request, user_id: str, org_slug: str):
         return {"ok": True}
 
 
+def _audit_membership(session, user_id, org_slug: str, old: str, new: str, actor: str) -> None:
+    """Membership lifecycle transitions get append-only audit rows (008
+    table) — same-row stamps only keep the LAST transition, and Ananth's
+    deactivate-never-delete rule reads as no-history-loss (elastic-blackburn
+    review on 010). Encoded as {org}:{status} pairs, queryable by LIKE."""
+    from mobius_user.models.preference import UserPreferenceAudit
+
+    session.add(
+        UserPreferenceAudit(
+            user_id=user_id,
+            field="membership_status",
+            old_value=f"{org_slug}:{old}",
+            new_value=f"{org_slug}:{new}",
+            source=f"admin:{actor}"[:30],
+        )
+    )
+
+
 def _actor(request: Request) -> str:
     bearer = _bearer_user(request)
     if bearer:
@@ -949,6 +975,7 @@ def remove_from_org(request: Request, user_id: str, org_slug: str):
             raise HTTPException(status_code=404, detail="Unknown membership")
         already = row.status == "removed"
         if not already:
+            _audit_membership(session, uid, slug, row.status, "removed", _actor(request))
             row.status = "removed"
             row.removed_by = _actor(request)
             row.removed_at = datetime.utcnow()
@@ -977,6 +1004,7 @@ def restore_to_org(request: Request, user_id: str, org_slug: str):
         )
         if row is None:
             raise HTTPException(status_code=404, detail="No removed membership")
+        _audit_membership(session, uid, slug, "removed", "active", _actor(request))
         row.status = "active"
         row.approved_by = _actor(request)
         row.approved_at = datetime.utcnow()
@@ -999,6 +1027,12 @@ def deactivate_account(request: Request, user_id: str):
     with get_db_session() as session:
         user = session.query(AppUser).filter(AppUser.user_id == uid).first()
         already = user.status == "disabled"
+        if not already:
+            from mobius_user.models.preference import UserPreferenceAudit
+            session.add(UserPreferenceAudit(
+                user_id=uid, field="account_status",
+                old_value=user.status, new_value="disabled",
+                source=f"admin:{actor}"[:30]))
         user.status = "disabled"
         sessions_revoked = (
             session.query(UserSession)
@@ -1029,6 +1063,11 @@ def reactivate_account(request: Request, user_id: str):
                 status_code=409,
                 detail=f"Account is '{user.status}', not disabled",
             )
+        from mobius_user.models.preference import UserPreferenceAudit
+        session.add(UserPreferenceAudit(
+            user_id=uid, field="account_status",
+            old_value="disabled", new_value="active",
+            source=f"admin:{_actor(request)}"[:30]))
         user.status = "active"
         session.commit()
         return {"ok": True, "user_id": str(uid), "account_status": "active",
