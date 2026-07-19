@@ -919,6 +919,122 @@ def remove_membership(request: Request, user_id: str, org_slug: str):
         return {"ok": True}
 
 
+def _actor(request: Request) -> str:
+    bearer = _bearer_user(request)
+    if bearer:
+        return bearer.email or str(bearer.user_id)
+    return "internal-key"
+
+
+@router.post("/{user_id}/orgs/{org_slug}/remove")
+def remove_from_org(request: Request, user_id: str, org_slug: str):
+    """Team & Access "Remove" — SOFT org-scoped removal (Ananth's rule:
+    deactivate, never delete). Membership row + roles survive for restore;
+    user drops out of directory/mentions/sign-in org context. A removed row
+    also blocks self-reclaim via preferences — reinstatement is admin-only.
+    """
+    _require_writer(request)
+    uid = _existing_user_id(user_id)
+    slug = _slugify(org_slug)
+    with get_db_session() as session:
+        row = (
+            session.query(UserOrgMembership)
+            .filter(
+                UserOrgMembership.user_id == uid,
+                UserOrgMembership.org_slug == slug,
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Unknown membership")
+        already = row.status == "removed"
+        if not already:
+            row.status = "removed"
+            row.removed_by = _actor(request)
+            row.removed_at = datetime.utcnow()
+            row.updated_at = datetime.utcnow()
+            session.commit()
+        return {"ok": True, "user_id": str(uid), "org_slug": slug,
+                "membership_status": "removed", "already_removed": already}
+
+
+@router.post("/{user_id}/orgs/{org_slug}/restore")
+def restore_to_org(request: Request, user_id: str, org_slug: str):
+    """Reverse of /remove — removed → active, roles as they were.
+    (Pending self-claims still go through /approve, not here.)"""
+    _require_writer(request)
+    uid = _existing_user_id(user_id)
+    slug = _slugify(org_slug)
+    with get_db_session() as session:
+        row = (
+            session.query(UserOrgMembership)
+            .filter(
+                UserOrgMembership.user_id == uid,
+                UserOrgMembership.org_slug == slug,
+                UserOrgMembership.status == "removed",
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="No removed membership")
+        row.status = "active"
+        row.approved_by = _actor(request)
+        row.approved_at = datetime.utcnow()
+        row.updated_at = datetime.utcnow()
+        session.commit()
+        return {"ok": True, "user_id": str(uid), "org_slug": slug,
+                "membership_status": "active", "roles": list(row.roles or [])}
+
+
+@router.post("/{user_id}/deactivate")
+def deactivate_account(request: Request, user_id: str):
+    """ACCOUNT-level deactivation: blocks login (status=disabled), revokes
+    all active sessions, and stamp-revokes all active capabilities —
+    reactivation does NOT silently restore authority; admins re-grant
+    deliberately. Record + memberships retained (soft, reversible)."""
+    _require_writer(request)
+    uid = _existing_user_id(user_id)
+    actor = _actor(request)
+    now = datetime.utcnow()
+    with get_db_session() as session:
+        user = session.query(AppUser).filter(AppUser.user_id == uid).first()
+        already = user.status == "disabled"
+        user.status = "disabled"
+        sessions_revoked = (
+            session.query(UserSession)
+            .filter(UserSession.user_id == uid, UserSession.revoked_at.is_(None))
+            .update({"revoked_at": now})
+        )
+        caps_revoked = (
+            session.query(UserCapability)
+            .filter(UserCapability.user_id == uid, UserCapability.revoked_at.is_(None))
+            .update({"revoked_at": now, "revoked_by": f"deactivation:{actor}"})
+        )
+        session.commit()
+        return {"ok": True, "user_id": str(uid), "account_status": "disabled",
+                "already_disabled": already, "sessions_revoked": sessions_revoked,
+                "capabilities_revoked": caps_revoked}
+
+
+@router.post("/{user_id}/reactivate")
+def reactivate_account(request: Request, user_id: str):
+    """Reverse of /deactivate: disabled → active. Sessions return at next
+    login; capabilities stay revoked (deliberate re-grant required)."""
+    _require_writer(request)
+    uid = _existing_user_id(user_id)
+    with get_db_session() as session:
+        user = session.query(AppUser).filter(AppUser.user_id == uid).first()
+        if user.status != "disabled":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Account is '{user.status}', not disabled",
+            )
+        user.status = "active"
+        session.commit()
+        return {"ok": True, "user_id": str(uid), "account_status": "active",
+                "note": "capabilities remain revoked; re-grant deliberately"}
+
+
 class CapabilityBody(BaseModel):
     capability: str = Field(..., min_length=1, max_length=50)
     org_slug: Optional[str] = Field(None, max_length=255, description="Omit for a global grant")
