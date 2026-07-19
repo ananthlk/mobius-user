@@ -932,7 +932,12 @@ def grant_capability(request: Request, user_id: str, body: CapabilityBody):
     _require_writer(request)
     uid = _existing_user_id(user_id)
     cap = body.capability.strip().lower()
-    org = _slugify(body.org_slug) if body.org_slug else None
+    org = None
+    if body.org_slug:
+        # Resolve-first like every org_slug write path — an org-scoped
+        # authority pinned to a variant slug would never match real docs.
+        resolved = _master_org_resolve(body.org_slug.strip())
+        org = resolved["org_slug"] if resolved else _slugify(body.org_slug)
     granter = None
     bearer = _bearer_user(request)
     if bearer:
