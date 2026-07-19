@@ -181,6 +181,33 @@ class UserOrgMembership(Base):
     user = relationship("AppUser", back_populates="org_memberships")
 
 
+class UserCapability(Base):
+    """Revocable, auditable authority grants — ADMIN-set, user-visible.
+
+    Deliberately NOT a user_preference field: the preferences PUT path is
+    user-authenticated self-serve, and authority must never be
+    self-grantable (Ananth's ruling: admin-level set, not user enablement).
+    Reads surface as a read-only `capabilities` list on profile payloads.
+    Append-only history: revocation stamps, never deletes. Active grant =
+    revoked_at IS NULL. org_slug NULL = global.
+    """
+
+    __tablename__ = "user_capability"
+
+    capability_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("app_user.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    capability = Column(String(50), nullable=False)
+    org_slug = Column(String(255), nullable=True)
+    granted_by = Column(String(255), nullable=True)
+    granted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    revoked_by = Column(String(255), nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+
 class UserSession(Base):
     """Active user sessions for token management."""
 

@@ -43,6 +43,7 @@ from mobius_user.models.tenant import (
     AppUser,
     AuthProviderLink,
     UserAlias,
+    UserCapability,
     UserOrgMembership,
     UserSession,
 )
@@ -273,6 +274,20 @@ def _welcome_block(session, user: AppUser, pref, memberships: list[dict], pendin
     }
 
 
+def _capabilities(session, user_id) -> list[dict]:
+    """Active authority grants — ADMIN-set, read-only on every profile
+    surface. org_slug None = global."""
+    rows = (
+        session.query(UserCapability)
+        .filter(
+            UserCapability.user_id == user_id,
+            UserCapability.revoked_at.is_(None),
+        )
+        .all()
+    )
+    return [{"capability": c.capability, "org_slug": c.org_slug} for c in rows]
+
+
 def _profile(session, user: AppUser) -> dict:
     memberships = _memberships(session, user.user_id)
     aliases = (
@@ -285,6 +300,7 @@ def _profile(session, user: AppUser) -> dict:
         "pending_org_memberships": _memberships(session, user.user_id, status="pending"),
         "roles_by_org": {m["org_slug"]: m["roles"] for m in memberships},
         "aliases": [a.alias for a in aliases],
+        "capabilities": _capabilities(session, user.user_id),
     }
 
 
@@ -651,6 +667,7 @@ def resolve_by_identity(
                     "enabled": pref.greeting_enabled if pref else True,
                 },
                 "welcome": _welcome_block(session, user, pref, memberships, pending),
+                "capabilities": _capabilities(session, user.user_id),
             },
         }
 
@@ -900,6 +917,86 @@ def remove_membership(request: Request, user_id: str, org_slug: str):
         if not deleted:
             raise HTTPException(status_code=404, detail="Unknown membership")
         return {"ok": True}
+
+
+class CapabilityBody(BaseModel):
+    capability: str = Field(..., min_length=1, max_length=50)
+    org_slug: Optional[str] = Field(None, max_length=255, description="Omit for a global grant")
+
+
+@router.post("/{user_id}/capabilities")
+def grant_capability(request: Request, user_id: str, body: CapabilityBody):
+    """ADMIN-only authority grant (Ananth's ruling: admin-level set, never
+    user enablement — deliberately not on the preferences PUT path).
+    Idempotent on an existing active grant."""
+    _require_writer(request)
+    uid = _existing_user_id(user_id)
+    cap = body.capability.strip().lower()
+    org = _slugify(body.org_slug) if body.org_slug else None
+    granter = None
+    bearer = _bearer_user(request)
+    if bearer:
+        granter = bearer.email or str(bearer.user_id)
+
+    with get_db_session() as session:
+        existing = (
+            session.query(UserCapability)
+            .filter(
+                UserCapability.user_id == uid,
+                UserCapability.capability == cap,
+                UserCapability.org_slug.is_(None) if org is None else UserCapability.org_slug == org,
+                UserCapability.revoked_at.is_(None),
+            )
+            .first()
+        )
+        if existing:
+            return {"ok": True, "granted": False, "already_active": True,
+                    "capability": cap, "org_slug": org}
+        session.add(
+            UserCapability(
+                user_id=uid, capability=cap, org_slug=org,
+                granted_by=granter or "internal-key",
+            )
+        )
+        session.commit()
+        return {"ok": True, "granted": True, "capability": cap, "org_slug": org}
+
+
+@router.delete("/{user_id}/capabilities/{capability}")
+def revoke_capability(
+    request: Request,
+    user_id: str,
+    capability: str,
+    org_slug: Optional[str] = Query(None, max_length=255),
+):
+    """ADMIN-only revocation — stamps revoked_by/at, never deletes (the
+    grant/revoke history IS the audit)."""
+    _require_writer(request)
+    uid = _existing_user_id(user_id)
+    cap = capability.strip().lower()
+    org = _slugify(org_slug) if org_slug else None
+    revoker = None
+    bearer = _bearer_user(request)
+    if bearer:
+        revoker = bearer.email or str(bearer.user_id)
+
+    with get_db_session() as session:
+        row = (
+            session.query(UserCapability)
+            .filter(
+                UserCapability.user_id == uid,
+                UserCapability.capability == cap,
+                UserCapability.org_slug.is_(None) if org is None else UserCapability.org_slug == org,
+                UserCapability.revoked_at.is_(None),
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="No active grant")
+        row.revoked_by = revoker or "internal-key"
+        row.revoked_at = datetime.utcnow()
+        session.commit()
+        return {"ok": True, "revoked": True, "capability": cap, "org_slug": org}
 
 
 def _existing_user_id(user_id: str) -> uuid.UUID:

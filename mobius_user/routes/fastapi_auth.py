@@ -327,6 +327,11 @@ def me(user: AppUser = Depends(_get_current_user)):
         # read as membership to any consumer.
         org_memberships = _rows("active")
         pending_org_memberships = _rows("pending")
+        # ADMIN-granted authorities (e.g. phi_override) — read-only here;
+        # grant/revoke lives on the admin capability routes, never the
+        # preferences PUT (Ananth's ruling: admin-level set).
+        from mobius_user.routes.users import _capabilities
+        capabilities = _capabilities(session, user.user_id)
 
     return {
         "ok": True,
@@ -347,6 +352,7 @@ def me(user: AppUser = Depends(_get_current_user)):
             # separately so surfaces can show "awaiting approval".
             "org_memberships": org_memberships,
             "pending_org_memberships": pending_org_memberships,
+            "capabilities": capabilities,
             "activities": activities,
             "preference": {
                 "tone": preference.tone if preference else "professional",
