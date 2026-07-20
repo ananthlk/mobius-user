@@ -214,7 +214,8 @@ def _upsert_membership(session, user_id: uuid.UUID, org_slug: str, roles: list[s
                 approved_at=datetime.utcnow(),
             )
         )
-    return {"applied": True, "org_slug": slug, "validated": validated, "roles": clean}
+    return {"applied": True, "org_slug": slug, "org_display_name": display_name,
+            "validated": validated, "roles": clean}
 
 
 # ── Public API ────────────────────────────────────────────────────────────
@@ -281,6 +282,7 @@ def create_or_reinvite_user(
                 "reactivated": reactivated,
                 "user_id": str(existing.user_id),
                 "email": email,
+                "display_name": existing.display_name or existing.first_name or email,
                 "status": "active",
                 "email_sent": False,
                 "membership": membership,
@@ -323,6 +325,7 @@ def create_or_reinvite_user(
         token_id = str(token.token_id)
         expires_at = token.expires_at.isoformat() + "Z"
         user_first_name = user.first_name
+        user_display_name = user.display_name or user.first_name or email
 
     email_sent = lifecycle_emails.send_invite_email(
         user_id=user_id,
@@ -338,6 +341,7 @@ def create_or_reinvite_user(
         "created": created,
         "user_id": user_id,
         "email": email,
+        "display_name": user_display_name,
         "status": "invited",
         "invite_expires_at": expires_at,
         "email_sent": email_sent,
