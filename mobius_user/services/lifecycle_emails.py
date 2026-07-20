@@ -18,6 +18,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _mask(email: str) -> str:
+    # Local import to avoid a circular dependency (account_lifecycle
+    # imports this module for sends).
+    from mobius_user.services.account_lifecycle import mask_email
+    return mask_email(email)
+
 INVITE_SUBJECT = "You've been invited to Mobius"
 RESET_SUBJECT = "Reset your Mobius password"
 
@@ -120,7 +127,7 @@ def _send(
         logger.info(
             "lifecycle_email: %s sent to %s (message_id=%s)",
             intent,
-            email,
+            _mask(email),
             data.get("message_id"),
         )
         return True

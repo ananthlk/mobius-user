@@ -77,7 +77,8 @@ def send_welcome_email(
         if not data.get("sent"):
             logger.warning("welcome_email: not sent: %s", data.get("error") or data)
             return False
-        logger.info("welcome_email: sent to %s (message_id=%s)", email, data.get("message_id"))
+        from mobius_user.services.account_lifecycle import mask_email
+        logger.info("welcome_email: sent to %s (message_id=%s)", mask_email(email), data.get("message_id"))
         return True
     except Exception as exc:
         logger.warning("welcome_email: send failed: %s", exc)

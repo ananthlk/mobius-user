@@ -134,7 +134,8 @@ def _master_org_resolve(name: str) -> Optional[dict]:
             f"{_master_org_url()}/org/resolve", json={"name": name}, timeout=3
         )
     except requests.RequestException as exc:
-        logger.warning("Master /org/resolve unreachable for %r: %s", name, exc)
+        # PHI-in-logs standard: never log the raw typed value — length only.
+        logger.warning("Master /org/resolve unreachable (name len=%d): %s", len(name), exc)
         return None
     if not resp.ok:
         return None
