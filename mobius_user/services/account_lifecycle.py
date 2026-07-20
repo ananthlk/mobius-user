@@ -192,6 +192,15 @@ def _upsert_membership(session, user_id: uuid.UUID, org_slug: str, roles: list[s
     if row:
         row.roles = clean
         row.org_display_name = display_name
+        # Admin-initiated add (invite path) mirrors the admin PUT: a
+        # pending or removed row activates, WITH an append-only audit row
+        # (no-history-loss rule).
+        if row.status != "active":
+            from mobius_user.routes.users import _audit_membership
+            _audit_membership(session, user_id, slug, row.status, "active", "invite-add")
+            row.status = "active"
+            row.approved_by = "invite-add"
+            row.approved_at = datetime.utcnow()
         row.updated_at = datetime.utcnow()
     else:
         session.add(
@@ -200,6 +209,9 @@ def _upsert_membership(session, user_id: uuid.UUID, org_slug: str, roles: list[s
                 org_slug=slug,
                 org_display_name=display_name,
                 roles=clean,
+                status="active",
+                approved_by="invite-add",
+                approved_at=datetime.utcnow(),
             )
         )
     return {"applied": True, "org_slug": slug, "validated": validated, "roles": clean}
@@ -235,11 +247,43 @@ def create_or_reinvite_user(
         )
 
         if existing and existing.status != "invited":
+            # Add-existing-user-to-org (Ananth-surfaced gap 2026-07-20):
+            # an admin inviting an email that already has an account means
+            # "add this person to the org" — upsert the membership instead
+            # of no-op'ing. A disabled account reactivates as part of the
+            # add (admin intent; capabilities stay revoked per the
+            # deactivate contract). No org_slug → nothing to add → the
+            # original email_exists still applies.
+            if not org_slug:
+                return {
+                    "ok": False,
+                    "error": "email_exists",
+                    "user_id": str(existing.user_id),
+                    "status": existing.status,
+                }
+            reactivated = False
+            if existing.status == "disabled":
+                from mobius_user.models.preference import UserPreferenceAudit
+                session.add(UserPreferenceAudit(
+                    user_id=existing.user_id, field="account_status",
+                    old_value="disabled", new_value="active",
+                    source="admin:invite-add"))
+                existing.status = "active"
+                reactivated = True
+            membership = _upsert_membership(
+                session, existing.user_id, org_slug, roles or []
+            )
+            session.commit()
             return {
-                "ok": False,
-                "error": "email_exists",
+                "ok": True,
+                "created": False,
+                "existing_account": True,
+                "reactivated": reactivated,
                 "user_id": str(existing.user_id),
-                "status": existing.status,
+                "email": email,
+                "status": "active",
+                "email_sent": False,
+                "membership": membership,
             }
 
         created = existing is None
