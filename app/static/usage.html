@@ -84,6 +84,8 @@
 <div id="login">
   <h1>Mobius — Access &amp; Usage</h1>
   <p>Sign in with a Mobius admin account.</p>
+  <div id="gbtn" style="margin-bottom:8px"></div>
+  <div style="display:flex;align-items:center;gap:10px;color:var(--ink-3);font-size:11px;margin:6px 0 2px"><span style="flex:1;height:1px;background:var(--line)"></span>or<span style="flex:1;height:1px;background:var(--line)"></span></div>
   <label>Email</label><input id="le" type="email" autocomplete="username" />
   <label>Password</label><input id="lp" type="password" autocomplete="current-password" />
   <button id="lb">Sign in</button>
@@ -193,6 +195,29 @@ function renderBars(el,rows,labk,valk,unit){
 }
 $("lb").onclick=login; $("lp").addEventListener("keydown",e=>{if(e.key==="Enter")login();});
 $("logout").onclick=signOut;
+
+// Google sign-in (the normal path for Mobius admins)
+async function initGoogle(){
+  try{
+    const cfg=await (await fetch(API+"/public-config")).json();
+    if(!cfg.google_client_id)return;
+    const s=document.createElement("script");s.src="https://accounts.google.com/gsi/client";s.async=true;
+    s.onload=()=>{
+      google.accounts.id.initialize({client_id:cfg.google_client_id,callback:async resp=>{
+        $("err").textContent="";
+        try{
+          const r=await fetch(API+"/auth/google",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id_token:resp.credential})});
+          const d=await r.json();
+          if(!r.ok||!d.access_token){$("err").textContent=d.detail||"Google sign-in failed.";return;}
+          token=d.access_token;localStorage.setItem(KEY,token);boot();
+        }catch(e){$("err").textContent="Google sign-in failed.";}
+      }});
+      google.accounts.id.renderButton($("gbtn"),{theme:"outline",size:"large",width:288,text:"signin_with"});
+    };
+    document.head.appendChild(s);
+  }catch(e){/* password form still works */}
+}
+initGoogle();
 if(token)boot();
 </script>
 </body>
