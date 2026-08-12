@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mobius — Access &amp; Usage</title>
+<style>
+  :root {
+    --violet:#7c3aed; --violet-soft:#ede9fe; --violet-ink:#5b21b6;
+    --ground:#faf9fc; --surface:#fff; --surface-2:#f4f2f8; --line:#e7e3ee;
+    --ink:#1c1826; --ink-2:#5c5470; --ink-3:#8b849c;
+    --good:#16a34a; --good-bg:#dcfce7; --warn:#b45309; --warn-bg:#fef3c7;
+    --crit:#b91c1c; --crit-bg:#fee2e2; --agent:#6366f1; --agent-bg:#e0e7ff;
+    --shadow:0 1px 2px rgba(28,24,38,.06),0 8px 24px -12px rgba(28,24,38,.18);
+    --sans:ui-sans-serif,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --violet:#a78bfa;--violet-soft:#2a2140;--violet-ink:#c4b5fd;
+    --ground:#0f0d16;--surface:#17141f;--surface-2:#1e1a29;--line:#2c2739;
+    --ink:#eceaf2;--ink-2:#a9a2ba;--ink-3:#756e88;
+    --good:#4ade80;--good-bg:#0f2e1c;--warn:#fbbf24;--warn-bg:#3a2a08;
+    --crit:#f87171;--crit-bg:#3a1414;--agent:#a5b4fc;--agent-bg:#1e2144;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -14px rgba(0,0,0,.7);
+  }}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 24px 60px}
+  .top{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:-.01em;font-size:17px}
+  .logo{width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,var(--violet),var(--violet-ink));display:grid;place-items:center;color:#fff;font-size:14px}
+  .who{margin-left:auto;font-size:12.5px;color:var(--ink-3)}
+  .who b{color:var(--ink)}
+  .btn{font:inherit;font-size:12.5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:6px 12px;border-radius:8px;cursor:pointer}
+  .btn:hover{border-color:var(--violet)}
+  /* login */
+  #login{max-width:340px;margin:12vh auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:26px}
+  #login h1{font-size:18px;margin:0 0 4px}
+  #login p{font-size:13px;color:var(--ink-2);margin:0 0 18px}
+  #login label{display:block;font-size:12px;color:var(--ink-3);margin:12px 0 5px}
+  #login input{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font:inherit;font-size:14px}
+  #login button{width:100%;margin-top:18px;padding:10px;border:0;border-radius:8px;background:var(--violet);color:#fff;font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+  #err{color:var(--crit);font-size:12.5px;margin-top:12px;min-height:16px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:14px 15px;box-shadow:var(--shadow)}
+  .kpi .lab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)}
+  .kpi .val{font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:3px}
+  .kpi .sub{font-size:11.5px;color:var(--ink-3);margin-top:1px}
+  .grid{display:grid;grid-template-columns:1.6fr 1fr;gap:16px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+  .ch{padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px;font-weight:650;display:flex;align-items:center;gap:8px}
+  .ch .mini{margin-left:auto;font-size:11.5px;font-weight:500;color:var(--ink-3)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600;padding:9px 16px;border-bottom:1px solid var(--line)}
+  td{padding:9px 16px;border-bottom:1px solid var(--line);vertical-align:middle}
+  tr:last-child td{border-bottom:0}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:var(--surface-2)}
+  tr.sel{background:var(--violet-soft)}
+  .u{display:flex;align-items:center;gap:9px}
+  .av{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:600;color:#fff;flex:none}
+  .nm{font-weight:600;color:var(--ink)} .em{font-size:11px;color:var(--ink-3)}
+  .pill{font-size:11px;padding:2.5px 9px;border-radius:999px;font-weight:600;white-space:nowrap}
+  .pill.active{background:var(--good-bg);color:var(--good)}
+  .pill.invited{background:var(--warn-bg);color:var(--warn)}
+  .pill.disabled{background:var(--crit-bg);color:var(--crit)}
+  .pill.agent{background:var(--agent-bg);color:var(--agent)}
+  .muted{color:var(--ink-3)}
+  .drow{padding:11px 16px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:78px 1fr;gap:10px;font-size:12.5px}
+  .drow:last-child{border-bottom:0}.drow .k{color:var(--ink-3);font-size:11.5px}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{font-size:11px;background:var(--surface-2);border:1px solid var(--line);padding:2px 8px;border-radius:999px;color:var(--ink-2)}
+  .bars{display:flex;flex-direction:column;gap:11px;padding:15px}
+  .bar{display:grid;grid-template-columns:110px 1fr 40px;gap:10px;align-items:center;font-size:12.5px}
+  .bar .bl{color:var(--ink-2)} .bar .bt{height:9px;background:var(--surface-2);border-radius:999px;overflow:hidden}
+  .bar .bf{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--violet),var(--violet-ink))}
+  .bar .bn{text-align:right;font-weight:600}
+  .empty{padding:18px 16px;font-size:12.5px;color:var(--ink-3)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+  @media(max-width:820px){.kpis{grid-template-columns:repeat(2,1fr)}.grid,.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="login">
+  <h1>Mobius — Access &amp; Usage</h1>
+  <p>Sign in with a Mobius admin account.</p>
+  <label>Email</label><input id="le" type="email" autocomplete="username" />
+  <label>Password</label><input id="lp" type="password" autocomplete="current-password" />
+  <button id="lb">Sign in</button>
+  <div id="err"></div>
+</div>
+
+<div id="app" class="wrap" style="display:none">
+  <div class="top">
+    <span class="brand"><span class="logo">∞</span> Access &amp; Usage</span>
+    <span class="who" id="who"></span>
+    <button class="btn" id="logout">Sign out</button>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+    <div class="card">
+      <div class="ch">People <span class="mini" id="peoplemini"></span></div>
+      <table><thead><tr><th>Name</th><th>Org</th><th>Status</th><th>Last seen</th></tr></thead>
+        <tbody id="rows"></tbody></table>
+    </div>
+    <div class="card" id="detail"><div class="ch">Profile <span class="mini">select a person</span></div>
+      <div class="empty">Pick someone on the left to see their profile, roles, access &amp; recent activity.</div></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><div class="ch">Usage by surface <span class="mini">last 7 days</span></div><div id="bysurface"></div></div>
+    <div class="card"><div class="ch">By organization <span class="mini">active members</span></div><div id="byorg"></div></div>
+  </div>
+</div>
+
+<script>
+const API="/api/v1", KEY="mobius.user.admin.token";
+let token=localStorage.getItem(KEY), users=[];
+const $=id=>document.getElementById(id);
+const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const hue=s=>{let h=0;for(const c of (s||""))h=(h*31+c.charCodeAt(0))%360;return `hsl(${h} 55% 52%)`;};
+const initials=n=>(n||"?").split(/\s+/).map(w=>w[0]).join("").slice(0,2).toUpperCase();
+const ago=iso=>{if(!iso)return "never";const s=(Date.now()-new Date(iso))/1000;if(s<90)return"just now";if(s<3600)return Math.round(s/60)+"m ago";if(s<86400)return Math.round(s/3600)+"h ago";return Math.round(s/86400)+"d ago";};
+
+async function api(path){const r=await fetch(API+path,{headers:{Authorization:"Bearer "+token}});if(r.status===401||r.status===403){signOut();throw new Error("auth");}return r.json();}
+
+async function login(){
+  $("err").textContent="";
+  try{
+    const r=await fetch(API+"/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({email:$("le").value.trim(),password:$("lp").value})});
+    const d=await r.json();
+    if(!r.ok||!d.access_token){$("err").textContent=d.detail||"Sign-in failed.";return;}
+    token=d.access_token;localStorage.setItem(KEY,token);boot();
+  }catch(e){$("err").textContent="Sign-in failed.";}
+}
+function signOut(){localStorage.removeItem(KEY);token=null;$("app").style.display="none";$("login").style.display="";}
+
+async function boot(){
+  try{
+    const me=await api("/auth/me");
+    $("who").innerHTML="signed in as <b>"+esc(me.user.display_name||me.user.email)+"</b>";
+  }catch(e){return;}
+  $("login").style.display="none";$("app").style.display="";
+  const [ul,su]=await Promise.all([api("/admin/users?limit=200"),api("/admin/usage/summary")]);
+  renderKpis(su.kpis); renderBars("bysurface",su.by_surface,"surface","count","runs"); renderBars("byorg",su.by_org,"org_slug","members","");
+  users=ul.users||ul||[]; renderUsers();
+}
+function renderKpis(k){
+  const tiles=[["People",k.people,(k.invited?k.invited+" invited":"all active")],
+    ["Active last 7d",k.active_7d,"of "+k.people+" people"],
+    ["Pending invites",k.invited,k.invited?"awaiting set-password":"none"],
+    ["With capability",k.with_capability,"admin-granted"]];
+  $("kpis").innerHTML=tiles.map(([l,v,s])=>`<div class="kpi"><div class="lab">${esc(l)}</div><div class="val">${v??0}</div><div class="sub">${esc(s)}</div></div>`).join("");
+}
+function renderUsers(){
+  const humans=users.filter(u=>!u.is_agent);
+  $("peoplemini").textContent=humans.length+" people";
+  $("rows").innerHTML=users.map((u,i)=>{
+    const nm=u.display_name||u.preferred_name||u.email||"—";
+    const st=u.is_agent?"agent":(u.status||"active");
+    const org=(u.org_memberships&&u.org_memberships[0])||u.primary_org||"—";
+    return `<tr data-i="${i}"><td><div class="u"><span class="av" style="background:${hue(nm)}">${esc(initials(nm))}</span><div><div class="nm">${esc(nm)}</div><div class="em">${esc(u.email||"—")}</div></div></div></td>
+      <td>${esc(typeof org==="object"?(org.display_name||org.org_slug):org)}</td>
+      <td><span class="pill ${st}">${st}</span></td>
+      <td class="${u.last_login_at?"":"muted"}">${u.is_agent?"—":ago(u.last_login_at)}</td></tr>`;
+  }).join("");
+  [...$("rows").querySelectorAll("tr")].forEach(tr=>tr.onclick=()=>selectUser(+tr.dataset.i,tr));
+}
+async function selectUser(i,tr){
+  [...$("rows").querySelectorAll("tr")].forEach(t=>t.classList.remove("sel"));tr.classList.add("sel");
+  const u=users[i];
+  let full=u;
+  try{const d=await api("/admin/users/"+u.user_id);full={...u,...d.user};}catch(e){}
+  const nm=full.display_name||full.email;
+  const roles=(full.roles_by_org?Object.values(full.roles_by_org).flat():full.roles)||[];
+  const caps=(full.capabilities||[]).map(c=>typeof c==="object"?c.capability:c);
+  const orgs=(full.org_memberships||[]).map(m=>typeof m==="object"?(m.display_name||m.org_slug):m);
+  $("detail").innerHTML=`<div class="ch"><span class="u"><span class="av" style="width:22px;height:22px;font-size:10px;background:${hue(nm)}">${esc(initials(nm))}</span> ${esc(nm)}</span><span class="mini">${esc(full.status||"")}</span></div>
+    <div class="drow"><div class="k">Email</div><div>${esc(full.email||"—")}</div></div>
+    <div class="drow"><div class="k">Org</div><div>${orgs.length?orgs.map(esc).join(", "):'<span class="muted">none</span>'}</div></div>
+    <div class="drow"><div class="k">Roles</div><div>${roles.length?`<div class="chips">${roles.map(r=>`<span class="chip">${esc(r)}</span>`).join("")}</div>`:'<span class="muted">—</span>'}</div></div>
+    <div class="drow"><div class="k">Access</div><div>${caps.length?caps.map(c=>`<span class="chip" style="color:var(--violet-ink)">${esc(c)}</span>`).join(" "):'<span class="muted">standard</span>'}</div></div>
+    <div class="drow"><div class="k">Prefs</div><div class="muted">${full.preference?esc((full.preference.tone||"—")+" tone · "+(full.preference.autonomy_sensitive_tasks||"—").replace(/_/g," ")+" on sensitive"):"—"}</div></div>
+    <div class="drow"><div class="k">Onboarded</div><div>${full.is_onboarded?"yes":'<span class="muted">not yet</span>'}${full.last_login_at?` · last seen ${esc(ago(full.last_login_at))}`:""}</div></div>`;
+}
+function renderBars(el,rows,labk,valk,unit){
+  if(!rows||!rows.length){$(el).innerHTML=`<div class="empty">No data yet — surfaces report usage here as they come online.</div>`;return;}
+  const max=Math.max(...rows.map(r=>r[valk]||0),1);
+  $(el).innerHTML=`<div class="bars">`+rows.map(r=>{
+    const lab=r[labk]==null?"—":r[labk];
+    return `<div class="bar"><span class="bl">${esc(lab)}</span><span class="bt"><span class="bf" style="width:${Math.round((r[valk]||0)/max*100)}%"></span></span><span class="bn">${r[valk]||0}</span></div>`;
+  }).join("")+`</div>`;
+}
+$("lb").onclick=login; $("lp").addEventListener("keydown",e=>{if(e.key==="Enter")login();});
+$("logout").onclick=signOut;
+if(token)boot();
+</script>
+</body>
+</html>

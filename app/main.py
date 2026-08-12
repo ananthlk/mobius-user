@@ -120,3 +120,9 @@ app.include_router(users_router, prefix="/api/v1/users")
 def admin_page():
     """Serve the static admin dashboard. Auth happens client-side via the page."""
     return FileResponse(Path(__file__).resolve().parent / "static" / "admin.html")
+
+
+@app.get("/admin/usage")
+def usage_console():
+    """Users & Usage console. Sign-in + admin allowlist enforced client-side + API-side."""
+    return FileResponse(Path(__file__).resolve().parent / "static" / "usage.html")

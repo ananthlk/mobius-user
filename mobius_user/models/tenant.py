@@ -212,6 +212,27 @@ class UserCapability(Base):
     revoked_at = Column(DateTime, nullable=True)
 
 
+class UserAccessEvent(Base):
+    """Append-only usage ledger — one row per surface access, post-auth.
+
+    Feeds the Users & Usage console. PHI-in-logs: `action` is a coarse enum,
+    never raw content. user_id nullable for anonymous pre-auth landing hits.
+    """
+
+    __tablename__ = "user_access_event"
+
+    access_event_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("app_user.user_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    surface = Column(String(40), nullable=False)
+    org_slug = Column(String(255), nullable=True)
+    action = Column(String(40), nullable=True)
+    occurred_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class UserSession(Base):
     """Active user sessions for token management."""
 

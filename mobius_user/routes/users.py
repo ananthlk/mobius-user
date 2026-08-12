@@ -409,6 +409,42 @@ def resolve_users(
         }
 
 
+class BeaconBody(BaseModel):
+    surface: str = Field(..., min_length=1, max_length=40)
+    org_slug: Optional[str] = Field(None, max_length=255)
+    action: Optional[str] = Field(None, max_length=40)
+
+
+@router.post("/access-beacon", status_code=202)
+def access_beacon(request: Request, body: BeaconBody):
+    """Fire-and-forget usage beacon from a gated surface, post-auth.
+
+    Reader-gated (bearer or internal-key). Resolves the acting user from the
+    bearer token when present so surfaces don't pass user_id (can't spoof).
+    Fail-open: a dropped beacon never blocks the user. PHI-in-logs — `action`
+    is a coarse label only, never raw content.
+    """
+    _require_reader(request)
+    acting = _bearer_user(request)
+    try:
+        with get_db_session() as session:
+            from mobius_user.models.tenant import UserAccessEvent
+
+            session.add(
+                UserAccessEvent(
+                    user_id=acting.user_id if acting else None,
+                    surface=body.surface.strip()[:40],
+                    org_slug=(_slugify(body.org_slug) if body.org_slug else None),
+                    action=(body.action.strip()[:40] if body.action else None),
+                )
+            )
+            session.commit()
+    except Exception as exc:  # never fail the caller on a telemetry write
+        logger.warning("access-beacon write failed (surface=%s): %s", body.surface[:40], exc)
+        return {"ok": False}
+    return {"ok": True}
+
+
 @router.get("/directory")
 def org_directory(
     request: Request,

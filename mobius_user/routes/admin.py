@@ -230,3 +230,66 @@ def get_user_detail(user_id: str, request: Request):
             "profile": profile,
         },
     }
+
+
+@router.get("/usage/summary")
+def usage_summary(request: Request):
+    """Everything the Users & Usage console needs in one call: KPIs, per-surface
+    and per-org usage (last 7d from the access ledger), and people rollups."""
+    _require_admin(request)
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+    from mobius_user.models.tenant import UserAccessEvent, UserOrgMembership, UserCapability
+
+    now = datetime.utcnow()
+    since_7d = now - timedelta(days=7)
+    with get_db_session() as session:
+        humans = session.query(AppUser).filter(AppUser.is_agent.is_(False))
+        total_people = humans.filter(AppUser.status != "disabled").count()
+        active_people = humans.filter(AppUser.status == "active").count()
+        invited = humans.filter(AppUser.status == "invited").count()
+        disabled = humans.filter(AppUser.status == "disabled").count()
+        active_7d = (
+            session.query(func.count(func.distinct(UserAccessEvent.user_id)))
+            .filter(UserAccessEvent.occurred_at >= since_7d)
+            .scalar()
+        ) or 0
+        new_7d = humans.filter(AppUser.created_at >= since_7d).count()
+
+        by_surface = [
+            {"surface": s, "count": c}
+            for s, c in session.query(UserAccessEvent.surface, func.count())
+            .filter(UserAccessEvent.occurred_at >= since_7d)
+            .group_by(UserAccessEvent.surface)
+            .order_by(func.count().desc())
+            .all()
+        ]
+        by_org = [
+            {"org_slug": o or "—", "members": c}
+            for o, c in session.query(UserOrgMembership.org_slug, func.count())
+            .filter(UserOrgMembership.status == "active")
+            .group_by(UserOrgMembership.org_slug)
+            .order_by(func.count().desc())
+            .all()
+        ]
+        caps = (
+            session.query(func.count(func.distinct(UserCapability.user_id)))
+            .filter(UserCapability.revoked_at.is_(None))
+            .scalar()
+        ) or 0
+
+    return {
+        "ok": True,
+        "generated_at": now.isoformat(),
+        "kpis": {
+            "people": total_people,
+            "active": active_people,
+            "invited": invited,
+            "disabled": disabled,
+            "active_7d": active_7d,
+            "new_7d": new_7d,
+            "with_capability": caps,
+        },
+        "by_surface": by_surface,
+        "by_org": by_org,
+    }
