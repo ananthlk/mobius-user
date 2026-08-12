@@ -123,7 +123,12 @@ const hue=s=>{let h=0;for(const c of (s||""))h=(h*31+c.charCodeAt(0))%360;return
 const initials=n=>(n||"?").split(/\s+/).map(w=>w[0]).join("").slice(0,2).toUpperCase();
 const ago=iso=>{if(!iso)return "never";const s=(Date.now()-new Date(iso))/1000;if(s<90)return"just now";if(s<3600)return Math.round(s/60)+"m ago";if(s<86400)return Math.round(s/3600)+"h ago";return Math.round(s/86400)+"d ago";};
 
-async function api(path){const r=await fetch(API+path,{headers:{Authorization:"Bearer "+token}});if(r.status===401||r.status===403){signOut();throw new Error("auth");}return r.json();}
+async function api(path){
+  const r=await fetch(API+path,{headers:{Authorization:"Bearer "+token}});
+  if(r.status===403){const e=new Error("forbidden");e.code=403;throw e;}
+  if(r.status===401){const e=new Error("unauthorized");e.code=401;throw e;}
+  return r.json();
+}
 
 async function login(){
   $("err").textContent="";
@@ -138,14 +143,22 @@ async function login(){
 function signOut(){localStorage.removeItem(KEY);token=null;$("app").style.display="none";$("login").style.display="";}
 
 async function boot(){
+  let me;
+  try{ me=await api("/auth/me"); }
+  catch(e){ if(e.code===401){signOut();} else {$("err").textContent="Couldn't reach the server. Try again.";} return; }
+  const email=me.user.email||"";
   try{
-    const me=await api("/auth/me");
-    $("who").innerHTML="signed in as <b>"+esc(me.user.display_name||me.user.email)+"</b>";
-  }catch(e){return;}
-  $("login").style.display="none";$("app").style.display="";
-  const [ul,su]=await Promise.all([api("/admin/users?limit=200"),api("/admin/usage/summary")]);
-  renderKpis(su.kpis); renderBars("bysurface",su.by_surface,"surface","count","runs"); renderBars("byorg",su.by_org,"org_slug","members","");
-  users=ul.users||ul||[]; renderUsers();
+    const [ul,su]=await Promise.all([api("/admin/users?limit=200"),api("/admin/usage/summary")]);
+    $("login").style.display="none";$("app").style.display="";
+    $("who").innerHTML="signed in as <b>"+esc(me.user.display_name||email)+"</b>";
+    renderKpis(su.kpis); renderBars("bysurface",su.by_surface,"surface","count","runs"); renderBars("byorg",su.by_org,"org_slug","members","");
+    users=ul.users||ul||[]; renderUsers();
+  }catch(e){
+    // Valid sign-in, but not an admin — say so, don't silently bounce.
+    if(e.code===403){ $("err").innerHTML="Signed in as <b>"+esc(email)+"</b>, but that account isn't a Mobius admin. Ask to be added to the admin list."; }
+    else { $("err").textContent="Couldn't load the console. Try again."; }
+    token=null;localStorage.removeItem(KEY);
+  }
 }
 function renderKpis(k){
   const tiles=[["People",k.people,(k.invited?k.invited+" invited":"all active")],
