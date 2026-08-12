@@ -218,6 +218,68 @@ def _upsert_membership(session, user_id: uuid.UUID, org_slug: str, roles: list[s
             "validated": validated, "roles": clean}
 
 
+# ── Cross-origin hand-off (chat → surface) ─────────────────────────────────
+#
+# Surfaces are separate a.run.app origins (no shared cookie), so navigating
+# from chat to another surface can't carry the session for free. Chat mints a
+# short-lived single-use code, appends it to the outbound link as `#h=<code>`
+# (fragment — never hits a server log), and the target surface redeems it for a
+# real session. Reuses the auth_token model (purpose='handoff'); no new schema.
+
+HANDOFF_TTL_SECONDS = 60
+
+
+def mint_handoff(user_id: uuid.UUID, *, created_by: Optional[str] = None) -> dict:
+    """Mint a single-use hand-off code for an already-authenticated user.
+
+    Unlike invite/reset tokens, hand-off codes do NOT void their siblings —
+    chat may render several cross-surface links at once, each with its own
+    code, and all must stay valid. Security is TTL (60s) + single-use, not
+    exclusivity.
+    """
+    now = datetime.utcnow()
+    raw = generate_raw_token()
+    with get_db_session() as session:
+        token = AuthToken(
+            user_id=user_id,
+            purpose="handoff",
+            token_hash=hash_token(raw),
+            expires_at=now + timedelta(seconds=HANDOFF_TTL_SECONDS),
+            created_by=created_by or "chat-handoff",
+        )
+        session.add(token)
+        session.commit()
+    return {"code": raw, "expires_in": HANDOFF_TTL_SECONDS}
+
+
+def redeem_handoff(raw_code: str, *, device_info: Optional[dict] = None):
+    """Redeem a hand-off code → full session envelope for the coded user.
+
+    Returns (auth_response, None) or (None, error) with error ∈
+    token_invalid|token_consumed|token_expired|user_inactive. Single-use:
+    the code is consumed on redeem.
+    """
+    from mobius_user.services.auth_service import get_auth_service
+
+    with get_db_session() as session:
+        token, err = _find_valid_token(session, (raw_code or "").strip(), "handoff")
+        if err:
+            return None, err
+        user = session.query(AppUser).filter(AppUser.user_id == token.user_id).first()
+        if user is None or user.status != "active":
+            # A deactivated account's stale code must not mint a session.
+            return None, "user_inactive"
+        token.consumed_at = datetime.utcnow()
+        user_id = token.user_id
+        session.commit()
+
+    # Issue outside the token session so last_login/session rows commit cleanly.
+    auth_response = get_auth_service()._issue_session_for_user(
+        user_id, device_info=device_info
+    )
+    return auth_response, None
+
+
 # ── Public API ────────────────────────────────────────────────────────────
 
 

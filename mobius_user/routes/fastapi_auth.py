@@ -447,6 +447,32 @@ def check_email(body: CheckEmailBody):
     return {"ok": True, "exists": False}
 
 
+class HandoffRedeemBody(BaseModel):
+    code: str
+
+
+@router.post("/handoff/mint")
+def handoff_mint(user: AppUser = Depends(_get_current_user)):
+    """Mint a 60s single-use hand-off code for the authenticated caller.
+
+    Chat calls this when rendering a link to another Mobius surface, then
+    appends `#h=<code>` to the outbound URL so the target skips re-login.
+    Cross-origin (§4 of the auth-gating spec): separate a.run.app origins
+    can't share a cookie, so the code carries identity for one hop.
+    """
+    return {"ok": True, **account_lifecycle.mint_handoff(user.user_id, created_by="chat-handoff")}
+
+
+@router.post("/handoff/redeem")
+def handoff_redeem(body: HandoffRedeemBody):
+    """Redeem a hand-off code for a real session. Public: the single-use,
+    60s code IS the credential (same model as set-password)."""
+    auth_response, error = account_lifecycle.redeem_handoff((body.code or "").strip())
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return {"ok": True, **auth_response}
+
+
 @router.post("/set-password")
 def set_password(body: SetPasswordBody):
     """Consume an invite token, set the password, activate + sign in.
