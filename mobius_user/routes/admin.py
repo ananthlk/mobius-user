@@ -52,7 +52,15 @@ def _require_admin(request: Request) -> AppUser:
             detail="Admin endpoints disabled (MOBIUS_USER_ADMIN_EMAILS unset)",
         )
     email = (user.email or "").strip().lower()
-    if email not in allow:
+    # Gmail plus-tag aware: a +tag address delivers to the same inbox, so if
+    # the base address is allowlisted, all its variants are the same person.
+    # Match the raw email OR its plus-stripped base against the allowlist
+    # (also stripping tags on the allowlist side).
+    def _base(e: str) -> str:
+        local, _, domain = e.partition("@")
+        return f"{local.split('+', 1)[0]}@{domain}" if domain else e
+    allow_bases = {_base(a) for a in allow}
+    if email not in allow and _base(email) not in allow and _base(email) not in allow_bases:
         raise HTTPException(status_code=403, detail="Forbidden")
     return user
 
