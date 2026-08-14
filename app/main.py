@@ -115,6 +115,18 @@ app.include_router(auth_router, prefix="/api/v1/auth")
 app.include_router(admin_router, prefix="/api/v1/admin")
 app.include_router(users_router, prefix="/api/v1/users")
 
+# Canonical cross-surface beacon path. The handler lives on the users
+# router (/api/v1/users/access-beacon); surfaces are cleaner calling
+# /api/v1/access-beacon directly, so alias it here. Both paths hit the
+# same handler. Keep this as the documented path in the gating recipe.
+from mobius_user.routes.users import access_beacon as _beacon_handler, BeaconBody  # noqa: E402
+from fastapi import Request as _Req  # noqa: E402
+
+
+@app.post("/api/v1/access-beacon", status_code=202)
+def access_beacon_alias(request: _Req, body: BeaconBody):
+    return _beacon_handler(request, body)
+
 
 @app.get("/admin")
 def admin_page():
