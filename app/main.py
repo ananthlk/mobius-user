@@ -41,10 +41,23 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="mobius-user", version="0.2.0")
 
 # CORS — chat (and any other consumer hosted on a different origin) talks to
-# this service via XHR. Defaults to '*' in dev for ergonomics; lock this down
-# explicitly via CORS_ALLOW_ORIGINS in any non-dev environment.
-_origins_env = (os.getenv("CORS_ALLOW_ORIGINS") or "*").strip()
+# this service via XHR, so the allowlist has to be explicit.
+#
+# This used to fall back to '*' when CORS_ALLOW_ORIGINS was unset. That is
+# fail-OPEN: a deploy that forgets the variable silently accepts every browser
+# origin, and nothing says so. It now falls back to allowing NOTHING — the
+# service still boots (health checks and local runs are unaffected), but no
+# cross-origin caller works until the variable is set, which surfaces the
+# mistake immediately instead of quietly widening access.
+#
+# '*' is still reachable, but only by asking for it explicitly.
+_origins_env = (os.getenv("CORS_ALLOW_ORIGINS") or "").strip()
 allow_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
+if not allow_origins:
+    logging.getLogger(__name__).warning(
+        "CORS_ALLOW_ORIGINS is unset — no cross-origin caller will be allowed. "
+        "Set it to a comma-separated allowlist (or '*' to deliberately open dev)."
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
