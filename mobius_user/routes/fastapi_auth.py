@@ -447,6 +447,40 @@ def check_email(body: CheckEmailBody):
     return {"ok": True, "exists": False}
 
 
+@router.post("/verify")
+def verify_token(user: AppUser = Depends(_get_current_user)):
+    """Shared server-side token verifier for surface WRITE paths.
+
+    The client-side gate protects the PAGE (redirect-to-sign-in); it does
+    NOT protect the API — a curl straight at a write endpoint skips the
+    bounce. So any service with write endpoints must verify the Bearer
+    server-side before acting. Rather than each service copying chat's JWT
+    logic (drift), they POST the user's Bearer here and get back a verified
+    identity + roles + capabilities to authorize on.
+
+    401 if the token is invalid/expired OR the account is not active
+    (deactivation is enforced here — _get_current_user → active-only lookup).
+    Returns the authz-relevant identity so `decided_by` is a VERIFIED subject.
+    """
+    from mobius_user.routes.users import _capabilities, _memberships
+
+    with get_db_session() as session:
+        memberships = _memberships(session, user.user_id)  # active only
+        caps = _capabilities(session, user.user_id)
+    roles = sorted({r for m in memberships for r in m["roles"]})
+    return {
+        "ok": True,
+        "valid": True,
+        "user_id": str(user.user_id),
+        "email": user.email,
+        "display_name": user.display_name,
+        "assignee_ref": user.assignee_ref,
+        "roles": roles,
+        "capabilities": [c["capability"] for c in caps],
+        "org_slugs": [m["org_slug"] for m in memberships],
+    }
+
+
 class HandoffRedeemBody(BaseModel):
     code: str
 
